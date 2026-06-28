@@ -675,7 +675,7 @@
             <button class="icon-btn" id="btn-wv-warehouse" onclick="openGlobalWarehouse()" style="margin-left:auto;"><svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M21 8H3V6a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v2zM21 8v10a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8h18zM10 12h4" stroke-linecap="round"/></svg></button>
         </div>
         <div style="display:flex; justify-content:flex-end; margin-top:10px;"><button class="btn-small" onclick="startWvTutorialFlow(false)" style="font-size:10px; padding:2px 8px;">重播教程指引</button></div>
-        <div class="folder-row" id="wv-tutorial-target-tabs" style="margin-top: 8px; justify-content: center; background-color: var(--bg-body);">
+        <div class="folder-row" id="wv-tutorial-target-tabs" style="margin-top: 8px; justify-content: center;">
             <div class="folder-tag active" id="tab-wv-normal" onclick="switchWvTab('normal')">普通世界观生成</div>
             <div class="folder-tag" id="tab-wv-if" onclick="switchWvTab('if')">if线世界观生成</div>
         </div>
@@ -746,7 +746,464 @@
 
     <!-- ================= JS 核心系统逻辑 ================= -->
     <script>
-        // ==================== 统一教程引擎核心 ====================
+        const WATERMARK = "#此角色卡由耳机·角色卡生成工坊制作而来\n\n";
+        const WB_WATERMARK = "#该人设配套世界书由【耳机の生成器】生成而来~\n\n";
+        const USER_WATERMARK = "#该user人设由【耳机の生成器】所生成而来~\n\n";
+        const IF_WATERMARK = "#此人设的if线人设来自【耳机の生成器】生成而出\n\n";
+        const WV_WATERMARK = "#该世界观由【耳机の生成器】所生成而出\n\n";
+
+        const BUILTIN_PRESET_POS = "Real casual snapshot taken by cellphone, ordinary daily life scene, real 3D real-world footage, no CGI, no comic or anime style, natural atmospheric haze covering the frame, not over-refined, full and rich object details while the picture is not sharp, slight lens blur and soft focus, original unretouched phone camera texture, soft natural ambient light, low saturation realistic color grading, subtle digital noise and film grain, relaxed documentary daily vibe, no excessive skin smoothing, no heavy sharpening, common indoor or outdoor living surroundings, soft gentle shadow and light without harsh contrast, authentic mundane life atmosphere";
+        const BUILTIN_PRESET_NEG = "ultra-sharp, overly intricate, flawless image quality, 8K ultra HD, heavy sharpening, harsh distinct edges, cyber aesthetic, close-up shot, selfie, human face, human figures, watermark, logo.";
+        const BUILTIN_PRESET_POS_ANIME = "digital illustration, anime illustration, cel shading, clean black lineart, solid flat color, slight gradient, retro printing texture, paper grain, soft ambient light, delicate composition, muted pastel color palette, intricate small details, no photo, no CGI";
+        const BUILTIN_PRESET_NEG_ANIME = "worst quality, blurry, photorealistic, 3d render, octane, CGI, realistic skin, photograph, depth of field, camera lens, sharp photographic details:1.5";
+
+        const agreementTexts = ["1. 本人郑重确认，已年满18周岁，具备完全民事行为能力。禁止未成年使用，未成年使用后果自负。", "2. 本人自愿使用此工坊，自行承担全部法律责任。因创作内容产生的任何纠纷均由使用者个人负责，制作者不承担连带责任。", "3. 严禁私自转发、二次传播本工具源文件，不得复制工坊内置模板。", "4. 禁止进行二次修改、倒卖、对外售卖。", "5. 禁止生成违法、侵权、违背公序良俗的内容。", "6. 工坊内所有内置模板均为【耳机】原创。", "7. 此工具免费，如遇倒卖请举报 QQ:3937649783。", "8. 点击同意，即代表遵守以上全部条款。"];
+        const disclaimerTexts = ["一、免责声明\n\n1. AI生成图像均由用户触发。所有生成内容、风格及合规性由用户本人全权负责。\n\n2. 制作者不对任何图片内容承担法律责任。"];
+        const importAgreementTexts = ["1. 严禁上传非本人原创制作的角色卡，不得搬运他人素材导入。", "2. 禁止私自二次转发、对外分享生成文件。", "3. 不允许导入付费定制人设生成世界书。\n\n如违反上述规定，后果自负。"];
+
+        const DB_NAME = 'ErjiWorkshopDB'; const STORE_NAME = 'AppState'; let db;
+        function initDB() { return new Promise((r) => { if (!window.indexedDB) { r(); return; } try { const req = indexedDB.open(DB_NAME, 2); req.onupgradeneeded = (e) => { db = e.target.result; if (!db.objectStoreNames.contains(STORE_NAME)) db.createObjectStore(STORE_NAME); }; req.onsuccess = (e) => { db = e.target.result; r(); }; req.onerror = () => r(); } catch(e) { r(); } }); }
+        async function saveToDB(key, data) { return new Promise((r) => { if (!db) { localStorage.setItem(key, JSON.stringify(data)); r(); return; } try { const tx = db.transaction(STORE_NAME, 'readwrite'); tx.objectStore(STORE_NAME).put(data, key); tx.oncomplete = r; tx.onerror = r; } catch(e) { localStorage.setItem(key, JSON.stringify(data)); r(); } }); }
+        async function loadFromDB(key) { return new Promise((r) => { if (!db) { const d = localStorage.getItem(key); r(d ? JSON.parse(d) : null); return; } try { const tx = db.transaction(STORE_NAME, 'readonly'); const req = tx.objectStore(STORE_NAME).get(key); req.onsuccess = () => r(req.result); req.onerror = () => r(null); } catch(e) { const d = localStorage.getItem(key); r(d ? JSON.parse(d) : null); } }); }
+
+        let state = {
+            theme: 'light', beautifyTheme: 'monochrome', cards: [], users: [], images: [],
+            folders: ['首页'], cardFolders: ['首页'], userFolders: ['首页'],
+            currentImgRatio: '16:9', tempAvatarStr: '', tempUserAvatarStr: '',
+            tApiUrl: '', tApiKey: '', tApiModel: '', tApiProxy: '', vApiUrl: '', vApiKey: '', vApiModel: '', vApiProxy: '', iApiUrl: '', iApiKey: '', iApiModel: '', iApiProxy: '',
+            agreement_signed: false, disclaimer_signed: false, import_agreement_signed: false,
+            jailbreakPrompt: '', wbJailbreakPrompt: '', jailbreakEnabled: false, wbJailbreakEnabled: false,
+            preferredExportFormat: 'docx', preferredUserExportFormat: 'docx', customMainBg: '', promptPresets: [],
+            inspirations: [], inspFolders: ['首页'], insp_tutorial_shown: false, if_tutorial_shown: false, wv_tutorial_shown: false
+        };
+
+        let sessionImages = []; let sessionIndex = -1; let isBatchMode = false; let selectedImageIds = [];
+        let isCardBatchMode = false; let selectedCardIds = []; let isUserBatchMode = false; let selectedUserIds = [];
+        let tempWbType = ''; let tempWbText = ''; let tempWbCardId = null;
+        let tempUserText = ''; let tempUserBoundCharName = ''; let currentGalleryImages = []; let currentGalleryIndex = -1; let isUserBound = true;
+        let tempInspText = ''; let tempInspEditId = null; let isInspBatchMode = false; let selectedInspIds = [];
+        let currentBatteryLevel = 85; let currentBatteryCharging = false;
+        
+        let tempIfAvatarStr = ''; let tempIfCharText = ''; let tempIfCharId = null; let tempIfTag = '';
+        let currentWvTab = 'normal'; let isWvNormalBound = true; let tempWvContentText = '';
+
+        window.onload = async () => {
+            try { updateTime(); setInterval(updateTime, 1000); initBattery(); initNetwork(); } catch (e) {}
+            try { await initDB(); await loadData(); } catch (e) {}
+            document.getElementById('archive-agreement-area').innerText = agreementTexts.join('\n\n');
+            document.getElementById('archive-disclaimer-area').innerText = disclaimerTexts.join('\n\n');
+            document.getElementById('archive-import-area').innerText = importAgreementTexts.join('\n\n');
+            if (!state.agreement_signed) triggerFlowAgreement('agreement', agreementTexts, async () => { state.agreement_signed = true; await saveData(); });
+        };
+
+        async function saveData() { await saveToDB('global_state', state); }
+
+        async function loadData() {
+            const data = await loadFromDB('global_state');
+            if (data) {
+                state = Object.assign(state, data);
+                if (state.tApiUrl) document.getElementById('t-api-url').value = state.tApiUrl; if (state.tApiKey) document.getElementById('t-api-key').value = state.tApiKey; if (state.tApiProxy) document.getElementById('t-api-proxy').value = state.tApiProxy; if (state.tApiModel) document.getElementById('t-api-model').innerHTML = `<option value="${state.tApiModel}">${state.tApiModel}</option>`;
+                if (state.vApiUrl) document.getElementById('v-api-url').value = state.vApiUrl; if (state.vApiKey) document.getElementById('v-api-key').value = state.vApiKey; if (state.vApiProxy) document.getElementById('v-api-proxy').value = state.vApiProxy; if (state.vApiModel) document.getElementById('v-api-model').innerHTML = `<option value="${state.vApiModel}">${state.vApiModel}</option>`;
+                if (state.iApiUrl) document.getElementById('i-api-url').value = state.iApiUrl; if (state.iApiKey) document.getElementById('i-api-key').value = state.iApiKey; if (state.iApiProxy) document.getElementById('i-api-proxy').value = state.iApiProxy;
+                if (state.iApiModel) { const iSel = document.getElementById('i-api-model'); if (![...iSel.options].some(o => o.value === state.iApiModel)) iSel.innerHTML += `<option value="${state.iApiModel}">${state.iApiModel}</option>`; iSel.value = state.iApiModel; }
+                
+                if (!state.cardFolders) state.cardFolders = ['首页']; if (!state.userFolders) state.userFolders = ['首页']; if (!state.folders) state.folders = ['首页'];
+                if (!state.promptPresets) state.promptPresets = []; if (!state.users) state.users = []; if (!state.inspirations) state.inspirations = []; if (!state.inspFolders) state.inspFolders = ['首页'];
+
+                document.getElementById('jailbreak-cb').checked = state.jailbreakEnabled || false; document.getElementById('jailbreak-prompt-textarea').value = state.jailbreakPrompt || ''; toggleJailbreakUI();
+                document.getElementById('wb-jailbreak-cb').checked = state.wbJailbreakEnabled || false; document.getElementById('wb-jailbreak-prompt-textarea').value = state.wbJailbreakPrompt || ''; toggleWbJailbreakUI();
+
+                if (state.customMainBg) { applyWallpapers(state.customMainBg); document.getElementById('wallpaper-main-preview').src = state.customMainBg; document.getElementById('wallpaper-main-preview').style.display = 'block'; }
+                if (state.preferredExportFormat) document.getElementById('card-export-format').value = state.preferredExportFormat;
+                if (state.preferredUserExportFormat) document.getElementById('user-export-format').value = state.preferredUserExportFormat;
+                if (state.customPosPrompt) document.getElementById('img-pos').value = state.customPosPrompt; else document.getElementById('img-pos').value = BUILTIN_PRESET_POS;
+                if (state.customNegPrompt) document.getElementById('img-neg').value = state.customNegPrompt; else document.getElementById('img-neg').value = BUILTIN_PRESET_NEG;
+
+                restoreRatioUI(); renderPresetDropdown(); renderCardFolders(); renderCardList('首页'); renderUserFolders(); renderUserList('首页'); renderGalleryFolders(); renderGalleryImages('首页'); renderInspFolders(); renderInspirationsList('首页');
+            }
+        }
+
+        function updateTime() { const now = new Date(); let h = now.getHours(); let m = now.getMinutes(); h = h < 10 ? '0' + h : h; m = m < 10 ? '0' + m : m; document.getElementById('status-time').textContent = `${h}:${m}`; }
+        function initBattery() { const bg = document.querySelector('.battery-container'); if (bg) { bg.onclick = () => { if (!navigator.getBattery) { currentBatteryCharging = !currentBatteryCharging; currentBatteryLevel += 5; if (currentBatteryLevel > 100) currentBatteryLevel = 20; updateBatteryUI(currentBatteryLevel, currentBatteryCharging); } }; } if (navigator.getBattery) { navigator.getBattery().then(b => { const update = () => { updateBatteryUI(Math.round(b.level * 100), b.charging); }; update(); b.addEventListener('chargingchange', update); b.addEventListener('levelchange', update); }).catch(e => { updateBatteryUI(currentBatteryLevel, currentBatteryCharging); }); } else { updateBatteryUI(currentBatteryLevel, currentBatteryCharging); } }
+        function updateBatteryUI(level, isCharging) { document.getElementById('battery-percent-text').textContent = level + '%'; document.getElementById('battery-fill').style.width = level + '%'; const bolt = document.getElementById('charging-bolt'); if (isCharging) { bolt.style.display = 'inline-block'; document.getElementById('battery-fill').style.backgroundColor = '#000000'; } else { bolt.style.display = 'none'; document.getElementById('battery-fill').style.backgroundColor = '#333333'; } }
+        function initNetwork() { const update = () => { document.querySelectorAll('.network-bar').forEach(b => b.style.backgroundColor = navigator.onLine ? '#333333' : '#cccccc'); }; window.addEventListener('online', update); window.addEventListener('offline', update); update(); }
+
+        function switchView(viewId) {
+            document.querySelectorAll('.view-container').forEach(v => v.classList.remove('active'));
+            document.getElementById(viewId).classList.add('active'); window.scrollTo(0, 0);
+            if (viewId === 'view-world-book') updateWbCharSelect();
+            if (viewId === 'view-user-gen') updateUserCharSelect();
+            if (viewId === 'view-if-gen') { updateIfCharSelect(); if (!state.if_tutorial_shown) startIfTutorialFlow(true); }
+            if (viewId === 'view-worldview-gen') { updateWvCharSelect(); updateWvIfCharSelect(); if (!state.wv_tutorial_shown) startWvTutorialFlow(true); }
+            if (viewId === 'view-char-preview') renderCardList(document.querySelector('#card-folders .folder-tag.active')?.innerText || '首页');
+            if (viewId === 'view-user-preview') renderUserList(document.querySelector('#user-folders .folder-tag.active')?.innerText || '首页');
+            if (viewId === 'view-inspiration-library' && !state.insp_tutorial_shown) startInspTutorialFlow(true);
+            if (viewId === 'view-img-gen' && !state.disclaimer_signed) triggerFlowAgreement('disclaimer', disclaimerTexts, async () => { state.disclaimer_signed = true; await saveData(); });
+        }
+        function backToDashboard() { switchView('view-dashboard'); }
+
+        let currentFlowIndex = 0; let flowTimer;
+        function triggerFlowAgreement(titleText, textsArray, onCompleteCallback) {
+            const overlay = document.getElementById('unified-modal-overlay'); const title = document.getElementById('unified-modal-title'); const content = document.getElementById('unified-modal-content'); const btn = document.getElementById('unified-modal-btn');
+            overlay.style.display = 'flex'; title.innerText = titleText === 'agreement' ? "用户使用协议" : (titleText === 'disclaimer' ? "权责免责声明" : "导入规则及免责条款"); content.innerHTML = ''; currentFlowIndex = 0;
+            const renderStep = () => { const block = document.createElement('div'); block.className = 'agreement-item-block'; block.innerText = textsArray[currentFlowIndex]; content.appendChild(block); setTimeout(() => block.classList.add('active'), 50); content.scrollTop = content.scrollHeight; let timeLeft = 5; btn.disabled = true; btn.innerText = `同意 (${timeLeft}s)`; btn.onclick = null; clearInterval(flowTimer); flowTimer = setInterval(() => { timeLeft--; if (timeLeft > 0) { btn.innerText = `同意 (${timeLeft}s)`; } else { clearInterval(flowTimer); btn.disabled = false; btn.innerText = "同意"; btn.onclick = () => { currentFlowIndex++; if (currentFlowIndex < textsArray.length) { renderStep(); } else { overlay.style.display = 'none'; if (onCompleteCallback) onCompleteCallback(); } }; } }, 1000); }; renderStep();
+        }
+
+        async function fetchWithProxy(url, options, proxyUrl) { let finalUrl = url; if (proxyUrl) finalUrl = proxyUrl + encodeURIComponent(url); try { const res = await fetch(finalUrl, options); if (res.status === 403 && proxyUrl) return await fetch(url, options); return res; } catch (err) { if (proxyUrl) return await fetch(url, options); throw err; } }
+        async function fetchRealModels(type, btnElement) {
+            let prefix = type === 'text' ? 't' : (type === 'vision' ? 'v' : 'i');
+            const urlInput = document.getElementById(`${prefix}-api-url`).value.trim(); const keyInput = document.getElementById(`${prefix}-api-key`).value.trim(); const proxyInput = document.getElementById(`${prefix}-api-proxy`) ? document.getElementById(`${prefix}-api-proxy`).value.trim() : '';
+            if (!urlInput || !keyInput) return alert(`请先填写 API 配置！`);
+            let fetchUrl = urlInput.endsWith('/') ? urlInput.slice(0, -1) : urlInput; if (!fetchUrl.endsWith('/models')) { if (!fetchUrl.includes('/v1')) fetchUrl += '/v1'; fetchUrl += '/models'; }
+            const oldText = btnElement.innerText; btnElement.innerText = "正在拉取..."; btnElement.disabled = true;
+            try { const response = await fetchWithProxy(fetchUrl, { method: 'GET', headers: { 'Authorization': `Bearer ${keyInput}`, 'Content-Type': 'application/json' } }, proxyInput); if (!response.ok) throw new Error(`HTTP Error ${response.status}`); const data = await response.json(); if (!data.data || !Array.isArray(data.data)) throw new Error("返回模型格式不合规范"); document.getElementById(`${prefix}-api-model`).innerHTML = data.data.map(m => `<option value="${m.id}">${m.id}</option>`).join(''); alert(`拉取到 ${data.data.length} 个模型！`); } catch (e) { alert("失败：" + e.message); } finally { btnElement.innerText = oldText; btnElement.disabled = false; }
+        }
+
+        function saveGlobalAPI(type) { let prefix = type === 'text' ? 't' : (type === 'vision' ? 'v' : 'i'); state[`${prefix}ApiUrl`] = document.getElementById(`${prefix}-api-url`).value.trim(); state[`${prefix}ApiKey`] = document.getElementById(`${prefix}-api-key`).value.trim(); state[`${prefix}ApiModel`] = document.getElementById(`${prefix}-api-model`).value; state[`${prefix}ApiProxy`] = document.getElementById(`${prefix}-api-proxy`) ? document.getElementById(`${prefix}-api-proxy`).value.trim() : ''; saveData(); alert(`API 配置已保存！`); }
+
+        async function callTextAPI(apiUrl, apiKey, targetModel, systemPrompt, userMessages, stream, onUpdate, onComplete, onError, proxyUrl) {
+            if (!apiUrl || !apiKey || !targetModel) return onError("对应 API 未配置。");
+            let endpoint = apiUrl.trim(); if (endpoint.endsWith('/')) endpoint = endpoint.slice(0, -1);
+            if (!endpoint.endsWith('/chat/completions')) { try { const parsedUrl = new URL(endpoint); if (parsedUrl.pathname === '/' || parsedUrl.pathname === '') endpoint += '/v1/chat/completions'; else endpoint += '/chat/completions'; } catch(e) { if (!endpoint.includes('/v1')) endpoint += '/v1/chat/completions'; else endpoint += '/chat/completions'; } }
+            const messages = [ { role: "system", content: systemPrompt }, ...userMessages ];
+            try {
+                const response = await fetchWithProxy(endpoint, { method: 'POST', headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` }, body: JSON.stringify({ model: targetModel, messages: messages, stream: stream, max_tokens: 4000, temperature: 0.7 }) }, proxyUrl);
+                if (!response.ok) { let details = ""; try { details = await response.text(); } catch(e) {} throw new Error(`HTTP ${response.status} - ${details || response.statusText}`); }
+                if (!stream) { const data = await response.json(); onComplete(data.choices[0].message.content); } 
+                else {
+                    const reader = response.body.getReader(); const decoder = new TextDecoder("utf-8"); let fullText = ""; let buffer = "";
+                    while (true) {
+                        const { done, value } = await reader.read(); if (done) break;
+                        buffer += decoder.decode(value, { stream: true }); const lines = buffer.split('\n'); buffer = lines.pop(); 
+                        for (const line of lines) { if (line.trim() === 'data: [DONE]') continue; if (line.startsWith('data: ')) { try { const parsed = JSON.parse(line.slice(6)); if (parsed.choices && parsed.choices[0].delta && parsed.choices[0].delta.content) { fullText += parsed.choices[0].delta.content; onUpdate(fullText); } } catch(e) {} } }
+                    } onComplete(fullText);
+                }
+            } catch (error) { onError(error.message); }
+        }
+
+        function getCharTemplate(isNsfw) {
+            let nsfwPart = isNsfw ? `NSFY－plot：\ncup：(写女角色就用这个罩杯)\n testicle：(写男角色就用几几长度)\nProactive & Non-proactive：\n－主动&不主动\nlike－pattern：\n－(喜欢的玩法)\nnsfy responding\n－(角色反应)\n` : '';
+            return `*<start……\nCharacter profile:\nname：(名字)\nNickname：(小名)\nage：(年龄)\nBirthday：(生日)\ngender：(性别)\nheight：(身高)\nMBTI：\nIdentity：\n－(身份)\n[background_story]：\n－(背景生平编年史，不要含糊)\nappearance(外貌)：\nface：(脸)\nhair：(发)\neyes：(眼)\nornament：(饰品)\nOverall personality(性格)：\n－性格\nDetailed Personality：\nIn front of everyone：\nIn front of a partner：\nLikes and Dislikes：\nChat Message Guidelines：\nOnline Chat Demonstration：\n${nsfwPart}Character Core：\n－(核心设定)\n【Remember the character guidelines】\n1.[定制3-5条扮演和对话指导守则]\n…end>*`;
+        }
+
+        function toggleJailbreakUI() { const checked = document.getElementById('jailbreak-cb').checked; document.getElementById('jailbreak-ui-panel').style.display = checked ? 'block' : 'none'; state.jailbreakEnabled = checked; saveData(); }
+        async function saveJailbreakPrompt() { state.jailbreakPrompt = document.getElementById('jailbreak-prompt-textarea').value; await saveData(); alert("破限词已更新保存！"); }
+        function toggleVisionUI() { document.getElementById('vision-ui-panel').style.display = document.getElementById('read-avatar-cb').checked ? 'block' : 'none'; }
+        function previewAvatar(event) { const file = event.target.files[0]; if (file) { const reader = new FileReader(); reader.onload = function(e) { document.getElementById('avatar-preview').src = e.target.result; document.getElementById('avatar-preview').style.display = 'block'; state.tempAvatarStr = e.target.result; }; reader.readAsDataURL(file); } }
+        function recognizeAvatar() { if (!state.tempAvatarStr) return alert("请先上传图像！"); if (!state.vApiModel || !state.vApiUrl) return alert("请配置 Vision 模型！"); const ta = document.getElementById('avatar-appearance-text'); const stream = document.querySelector('input[name="api_stream_mode"]:checked').value === 'stream'; ta.value = "正在智能识别..."; callTextAPI(state.vApiUrl, state.vApiKey, state.vApiModel, "请细致输出图像中角色的发型、发色、五官、配饰及穿着细节。直接输出。", [ {type: "text", text: "识别特征。"}, {type: "image_url", image_url: {url: state.tempAvatarStr}} ], stream, (upd) => { ta.value = upd; }, (fin) => { ta.value = fin; }, (err) => { ta.value = "[错误] " + err; }, state.vApiProxy); }
+
+        function generateCharacter() {
+            const dir = document.getElementById('char-direction').value.trim(); const charName = document.getElementById('char-name-input').value.trim() || "未命名"; if (!dir) return alert("大纲信息不可为空！");
+            const streamMode = document.querySelector('input[name="api_stream_mode"]:checked').value === 'stream';
+            let sysPrompt = `你是一个专业的人设生成器。请完全以以下模板格式和排版输出：\n\n${getCharTemplate(document.getElementById('nsfw-cb').checked)}`;
+            let userContent = ""; if (state.jailbreakEnabled && state.jailbreakPrompt) userContent += `[破限指令]：\n${state.jailbreakPrompt}\n\n`; if (document.getElementById('read-avatar-cb').checked) { const appText = document.getElementById('avatar-appearance-text').value.trim(); if (appText && !appText.includes('识别中')) userContent += `[外貌细节参考]：\n${appText}\n\n`; } userContent += `[属性大纲]：\n角色姓名：${charName}\n核心大纲方向：${dir}`;
+            const sb = document.getElementById('char-stream-box'); sb.style.display = 'block'; sb.style.color = 'var(--text-main)'; sb.innerText = `正在生成...`; document.getElementById('post-gen-retry-row').style.display = 'none'; document.getElementById('post-gen-action-row').style.display = 'none'; document.getElementById('post-edit-panel').style.display = 'none';
+            callTextAPI(state.tApiUrl, state.tApiKey, state.tApiModel, sysPrompt, [{role:"user", content: userContent}], streamMode, (txt) => { sb.innerText = WATERMARK + txt; }, (fin) => { sb.innerText = WATERMARK + fin; document.getElementById('post-gen-retry-row').style.display = 'flex'; document.getElementById('post-gen-action-row').style.display = 'flex'; }, (err) => { sb.style.color = 'var(--accent-danger)'; sb.innerText = "生成失败: " + err; }, state.tApiProxy);
+        }
+        function continueGenerateCharacter() { let base = document.getElementById('char-stream-box').innerText; if (base.startsWith(WATERMARK)) base = base.substring(WATERMARK.length); const sb = document.getElementById('char-stream-box'); sb.innerText = WATERMARK + base + "\n\n正在续写..."; document.getElementById('post-gen-retry-row').style.display = 'none'; document.getElementById('post-gen-action-row').style.display = 'none'; callTextAPI(state.tApiUrl, state.tApiKey, state.tApiModel, "请无缝接续下文。", [{role:"user", content: `[已有内容]：\n${base}\n\n【接下去输出】：`}], true, (txt) => { sb.innerText = WATERMARK + base + txt; }, (fin) => { sb.innerText = WATERMARK + base + fin; document.getElementById('post-gen-retry-row').style.display = 'flex'; document.getElementById('post-gen-action-row').style.display = 'flex'; }, (err) => { sb.innerText = "中断: " + err; }, state.tApiProxy); }
+        function regenerateCharacter() { document.getElementById('char-stream-box').innerText = ''; generateCharacter(); }
+        async function saveCharWithoutEdit() { const newCard = { id: Date.now(), name: document.getElementById('char-name-input').value.trim() || "未命名", avatar: state.tempAvatarStr, content: document.getElementById('char-stream-box').innerText, worldbooks: { city: '', workplace: '', supplements: [], relations: [], others: [], normal: [], ifWorldviews: [] }, ifLines: [], folder: '首页', tags: [] }; state.cards.unshift(newCard); await saveData(); renderCardList('首页'); tempGeneratedCard = newCard.id; document.getElementById('post-gen-action-row').style.display = 'none'; document.getElementById('wb-prompt-card').style.display = 'block'; }
+        function enterCharEditMode() { document.getElementById('char-stream-box').style.display = 'none'; document.getElementById('post-gen-action-row').style.display = 'none'; document.getElementById('avatar-edit-textarea').value = document.getElementById('char-stream-box').innerText; document.getElementById('post-edit-panel').style.display = 'block'; }
+        async function saveCharWithEdit() { const newCard = { id: Date.now(), name: document.getElementById('char-name-input').value.trim() || "已微调", avatar: state.tempAvatarStr, content: document.getElementById('avatar-edit-textarea').value, worldbooks: { city: '', workplace: '', supplements: [], relations: [], others: [], normal: [], ifWorldviews: [] }, ifLines: [], folder: '首页', tags: [] }; state.cards.unshift(newCard); await saveData(); renderCardList('首页'); tempGeneratedCard = newCard.id; document.getElementById('post-edit-panel').style.display = 'none'; document.getElementById('wb-prompt-card').style.display = 'block'; }
+        function resetMainPage() { document.getElementById('char-name-input').value = ''; document.getElementById('char-direction').value = ''; document.getElementById('avatar-preview').style.display = 'none'; document.getElementById('char-stream-box').style.display = 'none'; document.getElementById('wb-prompt-card').style.display = 'none'; state.tempAvatarStr = ''; }
+        function skipWorldbook() { switchView('view-char-preview'); }
+        function startWorldbookCascade() { switchView('view-world-book'); document.getElementById('wb-char-select').value = tempGeneratedCard; }
+
+        function updateUserCharSelect() { const sel = document.getElementById('user-bound-char-select'); if (sel) { sel.innerHTML = state.cards.map(c => `<option value="${c.id}">${c.name}</option>`).join(''); if (state.cards.length === 0) sel.innerHTML = `<option value="">(无现有char)</option>`; } }
+        function toggleUserBindState() { isUserBound = !isUserBound; const btn = document.getElementById('btn-toggle-user-bind'); const grp = document.getElementById('user-char-select-group'); if (isUserBound) { btn.innerText = "不绑定char生成"; grp.style.display = 'block'; } else { btn.innerText = "绑定现有char生成"; grp.style.display = 'none'; } }
+        function previewUserAvatar(event) { const file = event.target.files[0]; if (file) { const reader = new FileReader(); reader.onload = (e) => { document.getElementById('user-avatar-preview').src = e.target.result; document.getElementById('user-avatar-preview').style.display = 'block'; state.tempUserAvatarStr = e.target.result; }; reader.readAsDataURL(file); } }
+        function generateUser() {
+            const name = document.getElementById('user-name-input').value.trim() || "未命名User"; const dir = document.getElementById('user-direction').value.trim(); if (!dir) return alert("请填写方向！");
+            const stream = document.querySelector('input[name="user_gen_stream_mode"]:checked').value === 'stream';
+            let sysPrompt = ""; if (isUserBound && state.cards.length > 0) { const charCard = state.cards.find(c => c.id == document.getElementById('user-bound-char-select').value); if (charCard) { tempUserBoundCharName = charCard.name; sysPrompt = `你是一个优秀的User陪伴者生成器。\n为以下Char配对互补的User卡：\n${charCard.content}\n\n`; } } else { tempUserBoundCharName = ''; sysPrompt = "你是一个优秀的User人设生成器。"; }
+            sysPrompt += `\n\n【严格参考排版骨架】：\n*<start……\nUser Profile:\n姓名：${name}\n性别：...\n年龄：...\n外貌细节：...\n核心性格特征：...\n背景故事大纲：...\n行为惯性习惯：...\n相处互动指导细节：...\n…end>*`;
+            let userMsg = ""; if (state.jailbreakEnabled && state.jailbreakPrompt) userMsg += `[破限指令]：\n${state.jailbreakPrompt}\n\n`; userMsg += `[大纲]：\nUser姓名：${name}\n性格/关系：${dir}`;
+            const sb = document.getElementById('user-stream-box'); sb.style.display = 'block'; sb.style.color = 'var(--text-main)'; sb.innerText = `正在生成User...`; document.getElementById('post-user-retry-row').style.display = 'none'; document.getElementById('post-user-action-row').style.display = 'none'; document.getElementById('post-user-edit-panel').style.display = 'none';
+            if (!state.tApiUrl || !state.tApiKey) return sb.innerText = "❌ 未配置";
+            callTextAPI(state.tApiUrl, state.tApiKey, state.tApiModel, sysPrompt, [{role: "user", content: userMsg}], stream, (txt) => { sb.innerText = USER_WATERMARK + txt; }, (fin) => { const complete = USER_WATERMARK + fin + "\n\n……end*"; sb.innerText = complete; tempUserText = complete; document.getElementById('post-user-retry-row').style.display = 'flex'; document.getElementById('post-user-action-row').style.display = 'flex'; }, (err) => { sb.style.color = 'var(--accent-danger)'; sb.innerText = "失败: " + err; }, state.tApiProxy);
+        }
+        function continueGenerateUser() { let base = document.getElementById('user-stream-box').innerText; if (base.startsWith(USER_WATERMARK)) base = base.substring(USER_WATERMARK.length); if (base.endsWith("\n\n……end*")) base = base.substring(0, base.length - 8); const sb = document.getElementById('user-stream-box'); sb.innerText = USER_WATERMARK + base + "\n\n正在续写..."; document.getElementById('post-user-retry-row').style.display = 'none'; document.getElementById('post-user-action-row').style.display = 'none'; callTextAPI(state.tApiUrl, state.tApiKey, state.tApiModel, "无缝接续补充完整。", [{role:"user", content: `[已有]：\n${base}\n\n【继续】：`}], true, (txt) => { sb.innerText = USER_WATERMARK + base + txt; }, (fin) => { const complete = USER_WATERMARK + base + fin + "\n\n……end*"; sb.innerText = complete; tempUserText = complete; document.getElementById('post-user-retry-row').style.display = 'flex'; document.getElementById('post-user-action-row').style.display = 'flex'; }, (err) => { sb.innerText = "续写中断: " + err; }, state.tApiProxy); }
+        function regenerateUser() { document.getElementById('user-stream-box').innerText = ''; generateUser(); }
+        async function saveUserWithoutEdit() { const newUser = { id: Date.now(), name: document.getElementById('user-name-input').value.trim() || "未命名User", avatar: state.tempUserAvatarStr, content: tempUserText, boundCharName: isUserBound ? tempUserBoundCharName : '', folder: '首页', tags: [] }; state.users.unshift(newUser); await saveData(); renderUserList('首页'); alert("User已保存！"); resetUserPage(); switchView('view-user-preview'); }
+        function enterUserEditMode() { document.getElementById('user-stream-box').style.display = 'none'; document.getElementById('post-user-retry-row').style.display = 'none'; document.getElementById('post-user-action-row').style.display = 'none'; document.getElementById('user-edit-textarea').value = tempUserText; document.getElementById('post-user-edit-panel').style.display = 'block'; }
+        async function saveUserWithEdit() { const newUser = { id: Date.now(), name: document.getElementById('user-name-input').value.trim() || "微调User", avatar: state.tempUserAvatarStr, content: document.getElementById('user-edit-textarea').value, boundCharName: isUserBound ? tempUserBoundCharName : '', folder: '首页', tags: [] }; state.users.unshift(newUser); await saveData(); renderUserList('首页'); alert("修改保存成功！"); resetUserPage(); document.getElementById('post-user-edit-panel').style.display = 'none'; switchView('view-user-preview'); }
+        function resetUserPage() { document.getElementById('user-name-input').value = ''; document.getElementById('user-direction').value = ''; document.getElementById('user-avatar-preview').style.display = 'none'; document.getElementById('user-stream-box').style.display = 'none'; document.getElementById('post-user-retry-row').style.display = 'none'; document.getElementById('post-user-action-row').style.display = 'none'; state.tempUserAvatarStr = ''; tempUserText = ''; tempUserBoundCharName = ''; }
+
+        const TEMPLATE_CITY = "#CITY：\nCity_name：城市名\nlocation：地理坐标定位\ncity_climate：气候环境描述\nUrban Background：\n－特色街道/整体环境设施\nCity Rules_law：\n－特定的治安规定或生活准则律法";
+        const TEMPLATE_WORKPLACE = "#Workplace：\nWork location_name：工作地点名字\nabbreviation：缩写/简称\n inside：\n－建筑楼层内景布置及功能\nsurrounding_vicinity：\n－周边的吃住行街区环境";
+        const TEMPLATE_RELATION = "【relative network】\n{{char名字}}关系网：\nname：名字\ngender：性别\nage：年龄\nrelationship_identity：关系定位\nbackground_story：前尘往事(100-250字)\n——\nname：...\ngender：...";
+        const TEMPLATE_SUPPLEMENT = "#人设补充：\n【Character profile supplement】\n       Dress：\n            －写衣着详细。\n       manner_attitude：\n            －对待不同关系的详细态度。";
+
+        function updateWbCharSelect() { document.getElementById('wb-char-select').innerHTML = state.cards.map(c => `<option value="${c.id}">${c.name}</option>`).join(''); }
+        function toggleWbJailbreakUI() { const chk = document.getElementById('wb-jailbreak-cb').checked; document.getElementById('wb-jailbreak-ui-panel').style.display = chk ? 'block' : 'none'; state.wbJailbreakEnabled = chk; saveData(); }
+        async function saveWbJailbreakPrompt() { state.wbJailbreakPrompt = document.getElementById('wb-jailbreak-prompt-textarea').value; await saveData(); alert("已保存"); }
+        function triggerImportCharFile() { if (!state.import_agreement_signed) { triggerFlowAgreement('import_agreement', importAgreementTexts, async () => { state.import_agreement_signed = true; await saveData(); document.getElementById('import-char-file-input').click(); }); } else { document.getElementById('import-char-file-input').click(); } }
+        async function handleImportCharFile(event) { const file = event.target.files[0]; if (!file) return; const ext = file.name.split('.').pop().toLowerCase(); let text = ''; try { if (ext === 'txt') { text = await file.text(); } else if (ext === 'docx') { text = await readDocxFile(file); } else { return alert("只支持 docx/txt"); } document.getElementById('imported-char-text').value = text; document.getElementById('imported-char-name').value = file.name.substring(0, file.name.lastIndexOf('.')); document.getElementById('imported-panel').style.display = 'block'; } catch(e) { alert("出错: " + e.message); } }
+        async function readDocxFile(file) { if (!window.mammoth) { let script = document.createElement('script'); script.src = "https://cdnjs.cloudflare.com/ajax/libs/mammoth/1.4.2/mammoth.browser.min.js"; document.head.appendChild(script); await new Promise(r => script.onload = r); } return new Promise((resolve, reject) => { const reader = new FileReader(); reader.onload = (e) => { window.mammoth.extractRawText({ arrayBuffer: e.target.result }).then(res => resolve(res.value)).catch(err => reject(err)); }; reader.readAsArrayBuffer(file); }); }
+        function previewImportAvatar(event) { const file = event.target.files[0]; if (file) { const reader = new FileReader(); reader.onload = (e) => { document.getElementById('import-avatar-preview').src = e.target.result; document.getElementById('import-avatar-preview').style.display = 'block'; tempImportedAvatarStr = e.target.result; }; reader.readAsDataURL(file); } }
+        function showOtherWbInput() { const card = document.getElementById('other-wb-input-card'); card.style.display = card.style.display === 'none' ? 'block' : 'none'; }
+        async function confirmImportCharSave() { const name = document.getElementById('imported-char-name').value.trim(); const txt = document.getElementById('imported-char-text').value.trim(); if (!name || !txt) return; if (!state.cardFolders.includes('导入的角色卡')) state.cardFolders.splice(1, 0, '导入的角色卡'); const newCard = { id: Date.now(), name: name, avatar: tempImportedAvatarStr, content: txt, worldbooks: { city: '', workplace: '', supplements: [], relations: [], others: [], normal: [], ifWorldviews: [] }, ifLines: [], folder: '导入的角色卡', tags: [], isImported: true }; state.cards.unshift(newCard); await saveData(); document.getElementById('imported-panel').style.display = 'none'; document.getElementById('import-char-file-input').value = ''; renderCardFolders(); updateWbCharSelect(); alert(`已导入至专属分组。`); }
+        function showImportedWarningModal() { document.getElementById('imported-warning-modal').style.display = 'flex'; }
+        function closeImportedWarningModal() { document.getElementById('imported-warning-modal').style.display = 'none'; }
+
+        function generateIndependentWB(type) {
+            const charId = document.getElementById('wb-char-select').value; if (!charId) return alert("请选择角色！");
+            const card = state.cards.find(c => c.id == charId); const streamMode = document.querySelector('input[name="wb_stream_mode"]:checked').value === 'stream';
+            if (type !== 'other') document.getElementById('other-wb-input-card').style.display = 'none';
+            let sysPrompt = `你是一个优秀的配景撰写师。参考以下角色卡进行扩展：\n${card.content}\n\n【核心要求】：\n必须严格保留排版结构和英文字段，不要解释和闲聊，替换占位符进行详尽描写。`;
+            if (type === 'city') sysPrompt += `\n\n以该模板输出城市：\n${TEMPLATE_CITY}`; else if (type === 'workplace') sysPrompt += `\n\n以该模板输出地点：\n${TEMPLATE_WORKPLACE}`; else if (type === 'supplement') sysPrompt += `\n\n以该模板输出补充：\n${TEMPLATE_SUPPLEMENT}`; else if (type === 'relation') sysPrompt += `\n\n以该模板产出3位关系人：\n${TEMPLATE_RELATION.replace('{{char名字}}', card.name)}`; else if (type === 'other') { const customWbName = document.getElementById('other-wb-name-input').value.trim() || "自定世界书"; sysPrompt += `\n\n请以此模板产出：\n#${customWbName}：\n【${customWbName} background supplement】\n       Dress_details/Background_info：\n            －写详细背景等。\n       manner_attitude/Rules：\n            －写相关规则等。`; }
+            let userMsg = ""; if (state.wbJailbreakEnabled && state.wbJailbreakPrompt) userMsg += `[破限指令]：\n${state.wbJailbreakPrompt}\n\n`; userMsg += document.getElementById('wb-direction').value || "启动生成流程。";
+            const sb = document.getElementById('wb-stream-box'); sb.style.display = 'block'; sb.style.color = 'var(--text-main)'; sb.innerText = `正在生成中...`;
+            document.getElementById('post-wb-retry-row').style.display = 'none'; document.getElementById('post-wb-action-row').style.display = 'none'; document.getElementById('post-wb-edit-panel').style.display = 'none';
+            if (!state.tApiUrl || !state.tApiKey) return sb.innerText = "API 未配置";
+            callTextAPI(state.tApiUrl, state.tApiKey, state.tApiModel, sysPrompt, [{role:"user", content: userMsg}], streamMode, (txt) => { sb.innerText = WB_WATERMARK + txt; }, (fin) => { const complete = WB_WATERMARK + fin + "\n\n……end*"; sb.innerText = complete; tempWbType = type; tempWbText = complete; tempWbCardId = charId; document.getElementById('post-wb-retry-row').style.display = 'flex'; document.getElementById('post-wb-action-row').style.display = 'flex'; }, (err) => { sb.style.color = 'var(--accent-danger)'; sb.innerText = "失败: " + err; }, state.tApiProxy);
+        }
+        function continueGenerateIndependentWB() {
+            let base = document.getElementById('wb-stream-box').innerText; if (base.startsWith(WB_WATERMARK)) base = base.substring(WB_WATERMARK.length); if (base.endsWith("\n\n……end*")) base = base.substring(0, base.length - 8);
+            const sb = document.getElementById('wb-stream-box'); sb.innerText = WB_WATERMARK + base + "\n\n续写中..."; document.getElementById('post-wb-retry-row').style.display = 'none'; document.getElementById('post-wb-action-row').style.display = 'none';
+            callTextAPI(state.tApiUrl, state.tApiKey, state.tApiModel, "无缝接续上文，将未竟配置输出完整。", [{role:"user", content: `[已有]：\n${base}\n\n【继续】：`}], true, (txt) => { sb.innerText = WB_WATERMARK + base + txt; }, (fin) => { const complete = WB_WATERMARK + base + fin + "\n\n……end*"; sb.innerText = complete; tempWbText = complete; document.getElementById('post-wb-retry-row').style.display = 'flex'; document.getElementById('post-wb-action-row').style.display = 'flex'; }, (err) => { sb.innerText = "中断: " + err; }, state.tApiProxy);
+        }
+        function regenerateIndependentWB() { document.getElementById('wb-stream-box').innerText = ''; generateIndependentWB(tempWbType); }
+        async function saveWBWithoutEdit() { const card = state.cards.find(c => c.id == tempWbCardId); if (!card) return; if (!card.worldbooks) card.worldbooks = { city: '', workplace: '', supplements: [], relations: [], others: [], normal: [], ifWorldviews: [] }; if (tempWbType === 'city') card.worldbooks.city = tempWbText; else if (tempWbType === 'workplace') card.worldbooks.workplace = tempWbText; else if (tempWbType === 'supplement') card.worldbooks.supplements.push(tempWbText); else if (tempWbType === 'relation') card.worldbooks.relations.push(tempWbText); else if (tempWbType === 'other') card.worldbooks.others.push(tempWbText); await saveData(); alert("已写入本地！"); document.getElementById('post-wb-retry-row').style.display = 'none'; document.getElementById('post-wb-action-row').style.display = 'none'; renderCardList(document.querySelector('#card-folders .folder-tag.active')?.innerText || '首页'); }
+        function enterWBEditMode() { document.getElementById('wb-stream-box').style.display = 'none'; document.getElementById('post-wb-retry-row').style.display = 'none'; document.getElementById('post-wb-action-row').style.display = 'none'; document.getElementById('wb-edit-textarea').value = tempWbText; document.getElementById('post-wb-edit-panel').style.display = 'block'; }
+        async function saveWBWithEdit() { const card = state.cards.find(c => c.id == tempWbCardId); if (!card) return; const val = document.getElementById('wb-edit-textarea').value; if (!card.worldbooks) card.worldbooks = { city: '', workplace: '', supplements: [], relations: [], others: [], normal: [], ifWorldviews: [] }; if (tempWbType === 'city') card.worldbooks.city = val; else if (tempWbType === 'workplace') card.worldbooks.workplace = val; else if (tempWbType === 'supplement') card.worldbooks.supplements.push(val); else if (tempWbType === 'relation') card.worldbooks.relations.push(val); else if (tempWbType === 'other') card.worldbooks.others.push(val); tempWbText = val; await saveData(); const sb = document.getElementById('wb-stream-box'); sb.innerText = val; sb.style.display = 'block'; alert("已修改保存！"); document.getElementById('post-wb-edit-panel').style.display = 'none'; renderCardList(document.querySelector('#card-folders .folder-tag.active')?.innerText || '首页'); }
+
+        function renderCardFolders() { const container = document.getElementById('card-folders'); container.innerHTML = state.cardFolders.map(f => `<div class="folder-tag ${f==='首页'?'active':''}" onclick="selCardFolder(this, '${f}')">${f}</div>`).join('') + `<button class="add-folder" onclick="addCardFolder()"><svg viewBox="0 0 24 24" width="20" height="20" stroke="currentColor" stroke-width="2" fill="none"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg></button>`; }
+        function selCardFolder(el, name) { cancelCardBatchMode(); document.querySelectorAll('#card-folders .folder-tag').forEach(t => t.classList.remove('active')); el.classList.add('active'); renderCardList(name); }
+        function addCardFolder() { const n = prompt("输入分组名称:"); if (n && !state.cardFolders.includes(n)) { if (n === '导入的角色卡') return alert("不可使用保留词汇"); state.cardFolders.push(n); saveData(); renderCardFolders(); } }
+        function renderCardList(folderName = '首页') {
+            const container = document.getElementById('card-list-container'); if (!container) return; const list = folderName === '首页' ? state.cards : state.cards.filter(c => c.folder === folderName); container.innerHTML = '';
+            list.forEach(card => {
+                const isSelected = selectedCardIds.includes(card.id); const item = document.createElement('div'); item.className = 'list-item' + (isSelected ? ' selected' : '');
+                if (!card.worldbooks) card.worldbooks = { city: '', workplace: '', supplements: [], relations: [], others: [], normal: [], ifWorldviews: [] }; if (!card.ifLines) card.ifLines = []; if (!card.worldbooks.normal) card.worldbooks.normal = []; if (!card.worldbooks.ifWorldviews) card.worldbooks.ifWorldviews = [];
+                item.addEventListener('touchstart', () => cardPressStart(card.id)); item.addEventListener('touchend', cardPressEnd); item.addEventListener('mousedown', () => cardPressStart(card.id)); item.addEventListener('mouseup', cardPressEnd);
+                item.addEventListener('click', () => { if (isCardBatchMode) toggleSelectCard(card.id); });
+                let wbHtml = `<div class="export-row" style="margin-top:10px;">
+                    <button class="btn-small" onclick="event.stopPropagation(); exportCardFile(${card.id}, 'char')">导出人设</button>
+                    ${card.worldbooks.city ? `<button class="btn-small" onclick="event.stopPropagation(); exportCardFile(${card.id}, 'city')">导出城市</button>` : ''}
+                    ${card.worldbooks.workplace ? `<button class="btn-small" onclick="event.stopPropagation(); exportCardFile(${card.id}, 'workplace')">导出地点</button>` : ''}
+                    ${card.worldbooks.supplements.length ? `<button class="btn-small" onclick="event.stopPropagation(); exportCardFile(${card.id}, 'supp')">导出补充</button>` : ''}
+                    ${card.worldbooks.relations.length ? `<button class="btn-small" onclick="event.stopPropagation(); exportCardFile(${card.id}, 'rel')">导出关系网</button>` : ''}
+                    ${card.worldbooks.others.length ? `<button class="btn-small" onclick="event.stopPropagation(); exportCardFile(${card.id}, 'other')">导出其他设定</button>` : ''}
+                    ${card.ifLines.length ? `<button class="btn-small" style="background:#555; color:#fff;" onclick="event.stopPropagation(); exportCardFile(${card.id}, 'ifchar')">导出if线人设</button>` : ''}
+                    ${card.worldbooks.normal.length ? `<button class="btn-small" style="background:#555; color:#fff;" onclick="event.stopPropagation(); exportCardFile(${card.id}, 'normalwv')">普通世界观导出</button>` : ''}
+                    ${card.worldbooks.ifWorldviews.length ? `<button class="btn-small" style="background:#555; color:#fff;" onclick="event.stopPropagation(); exportCardFile(${card.id}, 'ifwv')">if线世界观导出</button>` : ''}
+                    <button class="btn-small" style="background:#222; color:#fff; width:100%; margin-top:4px;" onclick="event.stopPropagation(); exportAllForCard(${card.id})">一键打包所有导出</button>
+                </div>`;
+                let tagsHtml = (card.tags || []).map(t => `<span style="font-size:10px; font-weight:bold; color:var(--accent-danger); margin-right:6px;">#${t}</span>`).join('');
+                item.innerHTML = `<div class="list-header"><div style="display:flex; align-items:center; gap:10px; width:100%;">${card.avatar ? `<img src="${card.avatar}" style="width:40px; height:40px; border-radius:8px; object-fit:cover;">` : ''}<div style="flex:1;"><div style="display:flex; align-items:center; gap:8px;"><span style="font-size:15px; font-weight:bold;">${card.name}</span>${tagsHtml}<button class="btn-small" style="padding:2px 6px; font-size:9px;" onclick="event.stopPropagation(); manageCardTags(${card.id})">+标签</button></div><span style="font-size:9px; color:var(--text-light); background:rgba(0,0,0,0.05); padding:2px 6px; border-radius:4px; display:inline-block; margin-top:4px;">${card.folder || '首页'}</span></div></div></div><div class="list-desc">${card.content.substring(0, 50)}...</div>
+                <details style="font-size:12px; color:var(--text-muted); margin-bottom:8px;" ${isCardBatchMode ? 'disabled' : ''} onclick="event.stopPropagation();">
+                    <summary style="outline:none; cursor:pointer; margin-bottom:8px; font-weight:500;">展开查看配套数据与世界书</summary>
+                    <div style="padding-left:12px; display:flex; flex-direction:column; gap:4px; border-left:2px solid var(--border-subtle);">
+                        <div>城市设定: ${card.worldbooks.city ? '已生成' : '无'}</div>
+                        <div>工作地点: ${card.worldbooks.workplace ? '已生成' : '无'}</div>
+                        <div>人设补充: ${card.worldbooks.supplements.length} 份</div>
+                        <div>关系网: ${card.worldbooks.relations.length} 份</div>
+                        ${card.worldbooks.others.length ? `<div>其他设定: ${card.worldbooks.others.length} 份</div>` : ''}
+                        <div style="margin-top:6px; font-weight:bold; color:#222;">if人设生成: ${card.ifLines.length} 份</div>
+                        <div style="font-weight:bold; color:#222;">普通世界观: ${card.worldbooks.normal.length} 份</div>
+                        <div style="font-weight:bold; color:#222;">if线世界观: ${card.worldbooks.ifWorldviews.length} 份</div>
+                    </div>
+                </details>${isCardBatchMode ? '' : wbHtml}`;
+                container.appendChild(item);
+            });
+        }
+        let cardPressTimer; function cardPressStart(id) { if (isCardBatchMode) return; cardPressTimer = setTimeout(() => enterCardBatchMode(id), 800); } function cardPressEnd() { clearTimeout(cardPressTimer); }
+        function enterCardBatchMode(id) { isCardBatchMode = true; selectedCardIds = [id]; updateCardBatchUI(); }
+        function cancelCardBatchMode() { isCardBatchMode = false; selectedCardIds = []; document.getElementById('card-batch-actions-bar').style.display = 'none'; renderCardList(document.querySelector('#card-folders .folder-tag.active')?.innerText || '首页'); }
+        function updateCardBatchUI() { const bar = document.getElementById('card-batch-actions-bar'); bar.style.display = 'flex'; document.getElementById('card-batch-count-text').innerText = `已选 ${selectedCardIds.length} 个角色卡`; const sel = document.getElementById('card-batch-folder-select'); sel.innerHTML = '<option value="">移动至分组...</option>'; state.cardFolders.forEach(f => sel.innerHTML += `<option value="${f}">${f}</option>`); renderCardList(document.querySelector('#card-folders .folder-tag.active')?.innerText || '首页'); }
+        function toggleSelectCard(id) { const idx = selectedCardIds.indexOf(id); if (idx > -1) selectedCardIds.splice(idx, 1); else selectedCardIds.push(id); if (selectedCardIds.length === 0) cancelCardBatchMode(); else updateCardBatchUI(); }
+        async function executeCardBatchDelete() { if (confirm("确认删除所选卡吗？")) { state.cards = state.cards.filter(c => !selectedCardIds.includes(c.id)); await saveData(); cancelCardBatchMode(); } }
+        async function executeCardBatchMove(target) { if (!target) return; const hasImported = state.cards.some(c => selectedCardIds.includes(c.id) && c.isImported); if (hasImported && target !== '导入的角色卡') { showImportedWarningModal(); cancelCardBatchMode(); return; } state.cards.forEach(c => { if(selectedCardIds.includes(c.id)) c.folder = target; }); await saveData(); cancelCardBatchMode(); }
+        function manageCardTags(id) { const card = state.cards.find(c => c.id == id); if (!card) return; const res = prompt("输入自定义标签，用逗号分开(最多十个):", (card.tags || []).join(',')); if (res === null) return; card.tags = res.split(/[,，]/).map(t => t.trim()).filter(t => t !== '').slice(0, 10); saveData(); renderCardList(document.querySelector('#card-folders .folder-tag.active')?.innerText || '首页'); }
+        function savePreferredExportFormat(val) { state.preferredExportFormat = val; saveData(); }
+
+        function renderUserFolders() { const container = document.getElementById('user-folders'); if (!container) return; container.innerHTML = state.userFolders.map(f => `<div class="folder-tag ${f==='首页'?'active':''}" onclick="selUserFolder(this, '${f}')">${f}</div>`).join('') + `<button class="add-folder" onclick="addUserFolder()"><svg viewBox="0 0 24 24" width="20" height="20" stroke="currentColor" stroke-width="2" fill="none"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg></button>`; }
+        function selUserFolder(el, name) { cancelUserBatchMode(); document.querySelectorAll('#user-folders .folder-tag').forEach(t => t.classList.remove('active')); el.classList.add('active'); renderUserList(name); }
+        function addUserFolder() { const n = prompt("输入新User分组名称:"); if (n && !state.userFolders.includes(n)) { state.userFolders.push(n); saveData(); renderUserFolders(); } }
+        function renderUserList(folderName = '首页') {
+            const container = document.getElementById('user-list-container'); if (!container) return;
+            const list = folderName === '首页' ? state.users : state.users.filter(u => u.folder === folderName); container.innerHTML = '';
+            list.forEach(user => {
+                const isSelected = selectedUserIds.includes(user.id); const item = document.createElement('div'); item.className = 'list-item' + (isSelected ? ' selected' : '');
+                item.addEventListener('touchstart', () => userPressStart(user.id)); item.addEventListener('touchend', userPressEnd); item.addEventListener('mousedown', () => userPressStart(user.id)); item.addEventListener('mouseup', userPressEnd);
+                item.addEventListener('click', () => { if (isUserBatchMode) toggleSelectUser(user.id); });
+                let tagsHtml = (user.tags || []).map(t => `<span style="font-size:10px; font-weight:bold; color:var(--accent-danger); margin-right:6px;">#${t}</span>`).join('');
+                let exportHtml = `<div class="export-row" style="margin-top:10px;"><button class="btn-small" onclick="event.stopPropagation(); exportUserFile(${user.id})">导出User人设</button></div>`;
+                let boundTextHtml = user.boundCharName ? `<div style="position:absolute; bottom:12px; right:16px; font-size:10px; font-weight:bold; color:var(--text-light);">绑定：${user.boundCharName}</div>` : '';
+                item.innerHTML = `<div class="list-header"><div style="display:flex; align-items:center; gap:10px; width:100%;">${user.avatar ? `<img src="${user.avatar}" style="width:40px; height:40px; border-radius:8px; object-fit:cover;">` : ''}<div style="flex:1;"><div style="display:flex; align-items:center; gap:8px;"><span style="font-size:15px; font-weight:bold;">${user.name}</span>${tagsHtml}<button class="btn-small" style="padding:2px 6px; font-size:9px;" onclick="event.stopPropagation(); manageUserTags(${user.id})">+标签</button></div><span style="font-size:9px; color:var(--text-light); background:rgba(0,0,0,0.05); padding:2px 6px; border-radius:4px; display:inline-block; margin-top:4px;">${user.folder || '首页'}</span></div></div></div><div class="list-desc">${user.content.substring(0, 60)}...</div>${isUserBatchMode ? '' : exportHtml}${boundTextHtml}`; container.appendChild(item);
+            });
+        }
+        let userPressTimer; function userPressStart(id) { if (isUserBatchMode) return; userPressTimer = setTimeout(() => enterUserBatchMode(id), 800); } function userPressEnd() { clearTimeout(userPressTimer); }
+        function enterUserBatchMode(id) { isUserBatchMode = true; selectedUserIds = [id]; updateUserBatchUI(); }
+        function cancelUserBatchMode() { isUserBatchMode = false; selectedUserIds = []; document.getElementById('user-batch-actions-bar').style.display = 'none'; renderUserList(document.querySelector('#user-folders .folder-tag.active')?.innerText || '首页'); }
+        function updateUserBatchUI() { const bar = document.getElementById('user-batch-actions-bar'); bar.style.display = 'flex'; document.getElementById('user-batch-count-text').innerText = `已选 ${selectedUserIds.length} 个User`; const sel = document.getElementById('user-batch-folder-select'); sel.innerHTML = '<option value="">移动至组...</option>'; state.userFolders.forEach(f => sel.innerHTML += `<option value="${f}">${f}</option>`); renderUserList(document.querySelector('#user-folders .folder-tag.active')?.innerText || '首页'); }
+        function toggleSelectUser(id) { const idx = selectedUserIds.indexOf(id); if (idx > -1) selectedUserIds.splice(idx, 1); else selectedUserIds.push(id); if (selectedUserIds.length === 0) cancelUserBatchMode(); else updateUserBatchUI(); }
+        async function executeUserBatchDelete() { if (confirm("确认删除所选User吗？")) { state.users = state.users.filter(u => !selectedUserIds.includes(u.id)); await saveData(); cancelUserBatchMode(); } }
+        async function executeUserBatchMove(target) { if (!target) return; state.users.forEach(u => { if (selectedUserIds.includes(u.id)) u.folder = target; }); await saveData(); cancelUserBatchMode(); }
+        function manageUserTags(id) { const user = state.users.find(u => u.id == id); if (!user) return; const res = prompt("输入User标签:", (user.tags || []).join(',')); if (res === null) return; user.tags = res.split(/[,，]/).map(t => t.trim()).filter(t => t !== '').slice(0, 10); saveData(); renderUserList(document.querySelector('#user-folders .folder-tag.active')?.innerText || '首页'); }
+        function savePreferredUserExportFormat(val) { state.preferredUserExportFormat = val; saveData(); }
+
+        function downloadUserFile(dataStr, filename) { const format = document.getElementById('user-export-format')?.value || state.preferredUserExportFormat || 'docx'; if (format === 'txt') { triggerDownload(new Blob([dataStr], {type: "text/plain;charset=utf-8"}), filename + ".txt"); } else if (format === 'docx') { const htmlEnvelope = `<html xmlns:o='urn:schemas-microsoft-com:office:office' xmlns:w='urn:schemas-microsoft-com:office:word' xmlns='http://www.w3.org/TR/REC-html40'><head><title>Export</title><style>body { font-family: Arial, sans-serif; white-space: pre-wrap; font-size: 11pt; line-height: 1.5; color: #000; }</style></head><body>${dataStr.replace(/\n/g, '<br>')}</body></html>`; triggerDownload(new Blob(['\ufeff' + htmlEnvelope], { type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' }), filename + ".docx"); } }
+        function exportUserFile(id) { const user = state.users.find(u => u.id == id); if (user) downloadUserFile(user.content, user.name + "_User人设"); }
+        async function executeUserBatchDownload() { if (selectedUserIds.length === 0) return; alert(`即将批量下载...`); const targets = state.users.filter(u => selectedUserIds.includes(u.id)); for (let i = 0; i < targets.length; i++) { await new Promise(r => setTimeout(r, 350)); downloadUserFile(targets[i].content, targets[i].name + "_User人设"); } cancelUserBatchMode(); }
+
+        function downloadCardFile(dataStr, filename) { const format = document.getElementById('card-export-format')?.value || state.preferredExportFormat || 'docx'; if (format === 'txt') { triggerDownload(new Blob([dataStr], {type: "text/plain;charset=utf-8"}), filename + ".txt"); } else if (format === 'docx') { const htmlEnvelope = `<html xmlns:o='urn:schemas-microsoft-com:office:office' xmlns:w='urn:schemas-microsoft-com:office:word' xmlns='http://www.w3.org/TR/REC-html40'><head><title>Export</title><style>body { font-family: Arial, sans-serif; white-space: pre-wrap; font-size: 11pt; line-height: 1.5; color: #000; }</style></head><body>${dataStr.replace(/\n/g, '<br>')}</body></html>`; triggerDownload(new Blob(['\ufeff' + htmlEnvelope], { type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' }), filename + ".docx"); } }
+        function triggerDownload(blob, name) { const url = URL.createObjectURL(blob); const a = document.createElement('a'); a.href = url; a.download = name; document.body.appendChild(a); a.click(); document.body.removeChild(a); URL.revokeObjectURL(url); }
+        async function exportCardFile(id, type) {
+            const card = state.cards.find(c => c.id == id); if (!card) return; let fn = card.name; let q = [];
+            if (type === 'char') { q.push({ data: card.content, name: fn + "_人设" }); }
+            else if (type === 'city') { q.push({ data: card.worldbooks.city, name: fn + "_世界书_城市" }); }
+            else if (type === 'workplace') { q.push({ data: card.worldbooks.workplace, name: fn + "_世界书_工作地点" }); }
+            else if (type === 'supp') { (card.worldbooks.supplements||[]).forEach((s,i) => q.push({ data: s, name: `${fn}_世界书_人设补充_${i+1}` })); }
+            else if (type === 'rel') { (card.worldbooks.relations||[]).forEach((r,i) => q.push({ data: r, name: `${fn}_世界书_关系网_${i+1}` })); }
+            else if (type === 'other') { (card.worldbooks.others||[]).forEach((o,i) => q.push({ data: o, name: `${fn}_世界书_其他设定_${i+1}` })); }
+            else if (type === 'ifchar') { (card.ifLines||[]).forEach((il) => q.push({ data: il.content, name: `${fn}_if线人设_${il.tag}` })); }
+            else if (type === 'normalwv') { (card.worldbooks.normal||[]).forEach((nw,i) => q.push({ data: nw, name: `${fn}_普通世界观_${i+1}` })); }
+            else if (type === 'ifwv') { (card.worldbooks.ifWorldviews||[]).forEach((iw) => q.push({ data: iw.content, name: `${fn}_if线世界观_${iw.tag}` })); }
+            if(q.length === 0) return alert("暂无数据导出！"); if(q.length > 1) alert(`为您单独导出这 ${q.length} 份文件...`);
+            for (let i = 0; i < q.length; i++) { await new Promise(r => setTimeout(r, 350)); downloadCardFile(q[i].data, q[i].name); }
+        }
+        async function exportAllForCard(id) {
+            const card = state.cards.find(c => c.id == id); if (!card) return; let dq = [];
+            dq.push({ data: card.content, name: `${card.name}_人设` });
+            if (card.worldbooks.city) dq.push({ data: card.worldbooks.city, name: `${card.name}_世界书_城市` });
+            if (card.worldbooks.workplace) dq.push({ data: card.worldbooks.workplace, name: `${card.name}_世界书_工作地点` });
+            (card.worldbooks.supplements || []).forEach((s, i) => dq.push({ data: s, name: `${card.name}_世界书_人设补充_${i+1}` }));
+            (card.worldbooks.relations || []).forEach((r, i) => dq.push({ data: r, name: `${card.name}_世界书_关系网_${i+1}` }));
+            (card.worldbooks.others || []).forEach((o, i) => dq.push({ data: o, name: `${card.name}_世界书_其他设定_${i+1}` }));
+            (card.ifLines || []).forEach((il) => dq.push({ data: il.content, name: `${card.name}_if线人设_${il.tag}` }));
+            (card.worldbooks.normal || []).forEach((nw, i) => dq.push({ data: nw, name: `${card.name}_普通世界观_${i+1}` }));
+            (card.worldbooks.ifWorldviews || []).forEach((iw) => dq.push({ data: iw.content, name: `${card.name}_if线世界观_${iw.tag}` }));
+            alert(`正为您打包全量 ${dq.length} 份设定集...`); for (let i = 0; i < dq.length; i++) { await new Promise(r => setTimeout(r, 350)); downloadCardFile(dq[i].data, dq[i].name); }
+        }
+        async function executeCardBatchDownload() {
+            if (selectedCardIds.length === 0) return; let dq = [];
+            state.cards.forEach(card => { if (selectedCardIds.includes(card.id)) {
+                dq.push({ data: card.content, name: `${card.name}_人设` });
+                if (card.worldbooks.city) dq.push({ data: card.worldbooks.city, name: `${card.name}_世界书_城市` });
+                if (card.worldbooks.workplace) dq.push({ data: card.worldbooks.workplace, name: `${card.name}_世界书_工作地点` });
+                (card.worldbooks.supplements || []).forEach((s, i) => dq.push({ data: s, name: `${card.name}_世界书_人设补充_${i+1}` }));
+                (card.worldbooks.relations || []).forEach((r, i) => dq.push({ data: r, name: `${card.name}_世界书_关系网_${i+1}` }));
+                (card.worldbooks.others || []).forEach((o, i) => dq.push({ data: o, name: `${card.name}_世界书_其他设定_${i+1}` }));
+                (card.ifLines || []).forEach((il) => dq.push({ data: il.content, name: `${card.name}_if线人设_${il.tag}` }));
+                (card.worldbooks.normal || []).forEach((nw, i) => dq.push({ data: nw, name: `${card.name}_普通世界观_${i+1}` }));
+                (card.worldbooks.ifWorldviews || []).forEach((iw) => dq.push({ data: iw.content, name: `${card.name}_if线世界观_${iw.tag}` }));
+            }});
+            alert(`准备分发导出共 ${dq.length} 档文件...`); for (let i = 0; i < dq.length; i++) { await new Promise(r => setTimeout(r, 350)); downloadCardFile(dq[i].data, dq[i].name); } cancelCardBatchMode();
+        }
+
+        function deepSearchUrl(obj) { if (typeof obj === 'string') { if (obj.startsWith('http') || obj.startsWith('data:image')) return obj; } if (obj && typeof obj === 'object') { if (Array.isArray(obj)) { for (let val of obj) { let r = deepSearchUrl(val); if (r) return r; } } else { if (obj.b64_json) return `data:image/png;base64,${obj.b64_json}`; for (let key in obj) { let r = deepSearchUrl(obj[key]); if (r) return r; } } } return null; }
+        function setRatio(btn, ratio) { document.querySelectorAll('#img-ratios .ratio-btn').forEach(b => b.classList.remove('active')); btn.classList.add('active'); state.currentImgRatio = ratio; saveData(); }
+        function setRatioCustom(btn) { const r = prompt("输入比例（如 21:9）:"); if (r) { document.querySelectorAll('#img-ratios .ratio-btn').forEach(b => b.classList.remove('active')); btn.classList.add('active'); btn.innerText = `自定(${r})`; state.currentImgRatio = r; saveData(); } }
+        function restoreRatioUI() { const r = state.currentImgRatio || '16:9'; const btns = document.querySelectorAll('#img-ratios .ratio-btn'); btns.forEach(b => b.classList.remove('active')); let matched = false; btns.forEach(b => { if (b.innerText.includes(r)) { b.classList.add('active'); matched = true; } }); if (!matched && btns.length > 0) { const custom = btns[btns.length - 1]; custom.classList.add('active'); custom.innerText = `自定(${r})`; } }
+        function renderPresetDropdown() { const sel = document.getElementById('preset-selector'); let h = `<option value="builtin">内置真实感</option><option value="builtin_anime">日系平涂</option>`; state.promptPresets.forEach((p, i) => h += `<option value="${i}">${p.name}</option>`); sel.innerHTML = h; }
+        function loadPromptPreset() { const v = document.getElementById('preset-selector').value; if (v === 'builtin') { document.getElementById('img-pos').value = BUILTIN_PRESET_POS; document.getElementById('img-neg').value = BUILTIN_PRESET_NEG; } else if (v === 'builtin_anime') { document.getElementById('img-pos').value = BUILTIN_PRESET_POS_ANIME; document.getElementById('img-neg').value = BUILTIN_PRESET_NEG_ANIME; } else { const idx = parseInt(v); if (state.promptPresets[idx]) { document.getElementById('img-pos').value = state.promptPresets[idx].pos; document.getElementById('img-neg').value = state.promptPresets[idx].neg; } } saveCurrentImgPrompts(); }
+        async function savePromptPreset() { const name = document.getElementById('new-preset-name').value.trim(); if (!name) return; state.promptPresets.push({ name, pos: document.getElementById('img-pos').value, neg: document.getElementById('img-neg').value }); await saveData(); document.getElementById('new-preset-name').value = ''; renderPresetDropdown(); }
+        function clearCurrentPrompts() { document.getElementById('img-pos').value = ''; document.getElementById('img-neg').value = ''; saveCurrentImgPrompts(); }
+        function saveCurrentImgPrompts() { state.customPosPrompt = document.getElementById('img-pos').value; state.customNegPrompt = document.getElementById('img-neg').value; saveData(); }
+        async function generateImage(mode) {
+            if (!state.iApiUrl || !state.iApiKey) return alert("请配置生图 API！");
+            const user = document.getElementById('img-prompt').value.trim(); const pos = document.getElementById('img-pos').value.trim(); const neg = document.getElementById('img-neg').value.trim();
+            const cot = document.getElementById('img-cot-box'); cot.style.display = 'block'; let finalPrompt = [pos, user].filter(Boolean).join(', '); if (neg) finalPrompt += ` --no ${neg}`; if (state.currentImgRatio) finalPrompt += ` --ar ${state.currentImgRatio}`;
+            cot.innerText = `请求生成中...`; document.getElementById('img-spinner').style.display = 'block'; document.getElementById('img-final-preview').style.display = 'none';
+            let endpoint = state.iApiUrl.endsWith('/') ? state.iApiUrl.slice(0, -1) : state.iApiUrl; if (!endpoint.includes('images/generations')) { if(!endpoint.includes('/v1')) endpoint += '/v1'; endpoint += '/images/generations'; }
+            try { const response = await fetchWithProxy(endpoint, { method: 'POST', headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${state.iApiKey}` }, body: JSON.stringify({ model: state.iApiModel || 'dall-e-3', prompt: finalPrompt, n: 1 }) }, state.iApiProxy);
+                if (!response.ok) throw new Error("API 错误"); const d = await response.json(); const url = deepSearchUrl(d); if (!url) throw new Error("提取失败");
+                state.images.push({ id: Date.now(), url: url, folder: '首页' }); await saveData(); renderGalleryImages('首页');
+                if (mode === 'new') { sessionImages.push(url); sessionIndex = sessionImages.length - 1; } else { sessionImages[sessionIndex] = url; }
+                document.getElementById('img-spinner').style.display = 'none'; updateCarousel(); document.getElementById('img-action-row').style.display = 'flex'; cot.innerText += "\n[完结] 生成成功。";
+            } catch(e) { document.getElementById('img-spinner').style.display = 'none'; cot.innerText += "\n[中断]: " + e.message; }
+        }
+        function updateCarousel() { const img = document.getElementById('img-final-preview'); if (sessionImages.length > 0 && sessionIndex >= 0) { img.src = sessionImages[sessionIndex]; img.style.display = 'block'; document.getElementById('carousel-left').style.display = sessionIndex > 0 ? 'flex' : 'none'; document.getElementById('carousel-right').style.display = sessionIndex < sessionImages.length - 1 ? 'flex' : 'none'; } }
+        function prevSessionImage() { if(sessionIndex > 0) { sessionIndex--; updateCarousel(); } } function nextSessionImage() { if(sessionIndex < sessionImages.length - 1) { sessionIndex++; updateCarousel(); } }
+
+        function renderGalleryFolders() { const container = document.getElementById('gallery-folders'); container.innerHTML = state.folders.map(f => `<div class="folder-tag ${f==='首页'?'active':''}" onclick="selFolder(this, '${f}')">${f}</div>`).join('') + `<button class="add-folder" onclick="addFolder()"><svg viewBox="0 0 24 24" width="20" height="20" stroke="currentColor" stroke-width="2" fill="none"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg></button>`; }
+        function selFolder(el, name) { cancelBatchMode(); document.querySelectorAll('#gallery-folders .folder-tag').forEach(t=>t.classList.remove('active')); el.classList.add('active'); renderGalleryImages(name); }
+        function addFolder() { const n = prompt("输入分组名："); if (n && !state.folders.includes(n)) { state.folders.push(n); saveData(); renderGalleryFolders(); } }
+        function renderGalleryImages(folder) {
+            const grid = document.getElementById('gallery-grid'); grid.innerHTML = ''; const imgs = folder === '首页' ? state.images : state.images.filter(i => i.folder === folder); currentGalleryImages = imgs;
+            imgs.forEach((img, idx) => { const isSelected = selectedImageIds.includes(img.id); const item = document.createElement('div'); item.className = 'gallery-item' + (isSelected ? ' selected' : '');
+                item.addEventListener('touchstart', () => imgPressStart(img.id)); item.addEventListener('touchend', imgPressEnd); item.addEventListener('mousedown', () => imgPressStart(img.id)); item.addEventListener('mouseup', imgPressEnd);
+                item.innerHTML = `<img src="${img.url}">`; item.addEventListener('click', () => { if (isBatchMode) toggleSelectImage(img.id); else showGalleryModal(idx); }); grid.appendChild(item);
+            });
+        }
+        let iTimer; function imgPressStart(id) { if(!isBatchMode) iTimer = setTimeout(() => enterBatchMode(id), 800); } function imgPressEnd() { clearTimeout(iTimer); }
+        function enterBatchMode(id) { isBatchMode = true; selectedImageIds = [id]; updateBatchUI(); }
+        function cancelBatchMode() { isBatchMode = false; selectedImageIds = []; document.getElementById('batch-actions-bar').style.display = 'none'; renderGalleryImages(document.querySelector('#gallery-folders .folder-tag.active').innerText); }
+        function updateBatchUI() { document.getElementById('batch-actions-bar').style.display = 'flex'; document.getElementById('batch-count-text').innerText = `已选 ${selectedImageIds.length} 张`; const sel = document.getElementById('batch-folder-select'); sel.innerHTML = '<option value="">移动...</option>'; state.folders.forEach(f => sel.innerHTML += `<option value="${f}">${f}</option>`); renderGalleryImages(document.querySelector('#gallery-folders .folder-tag.active').innerText); }
+        function toggleSelectImage(id) { const idx = selectedImageIds.indexOf(id); if (idx > -1) selectedImageIds.splice(idx, 1); else selectedImageIds.push(id); if (selectedImageIds.length === 0) cancelBatchMode(); else updateBatchUI(); }
+        async function executeBatchMove(target) { if(!target) return; state.images.forEach(img => { if(selectedImageIds.includes(img.id)) img.folder = target; }); await saveData(); cancelBatchMode(); }
+        async function executeBatchDelete() { if(confirm("确定彻底删除吗？")) { state.images = state.images.filter(img => !selectedImageIds.includes(img.id)); await saveData(); cancelBatchMode(); } }
+        async function forceDownload(url, filename) { try { const res = await fetch(url, { mode: 'cors' }); const blob = await res.blob(); const u = URL.createObjectURL(blob); const a = document.createElement('a'); a.href = u; a.download = filename; document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(u); } catch (e) { try { const proxyUrl = "https://corsproxy.io/?url=" + encodeURIComponent(url); const res = await fetch(proxyUrl); const blob = await res.blob(); const u = URL.createObjectURL(blob); const a = document.createElement('a'); a.href = u; a.download = filename; document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(u); } catch(err) { window.open(url, '_blank'); } } }
+        async function executeBatchDownload() { const targets = state.images.filter(i => selectedImageIds.includes(i.id)); for(let i=0; i<targets.length; i++) { await new Promise(r => setTimeout(r, 300)); await forceDownload(targets[i].url, `图_${targets[i].id}.png`); } cancelBatchMode(); }
+        function showGalleryModal(idx) { currentGalleryIndex = idx; updateModalCarousel(); document.getElementById('img-modal').style.display = 'flex'; }
+        function updateModalCarousel() { const img = document.getElementById('modal-img-src'); if (currentGalleryImages[currentGalleryIndex]) { img.src = currentGalleryImages[currentGalleryIndex].url; document.getElementById('modal-carousel-left').style.display = currentGalleryIndex > 0 ? 'flex' : 'none'; document.getElementById('modal-carousel-right').style.display = currentGalleryIndex < currentGalleryImages.length - 1 ? 'flex' : 'none'; } }
+        function prevModalImage() { if(currentGalleryIndex > 0) { currentGalleryIndex--; updateModalCarousel(); } } function nextModalImage() { if(currentGalleryIndex < currentGalleryImages.length - 1) { currentGalleryIndex++; updateModalCarousel(); } }
+        function closeImgModal() { document.getElementById('img-modal').style.display = 'none'; }
+        function downloadActiveModalImage() { forceDownload(document.getElementById('modal-img-src').src, `大图_${Date.now()}.png`); }
+
+        function previewWallpaperMain(event) { const file = event.target.files[0]; if (file) { const reader = new FileReader(); reader.onload = (e) => { document.getElementById('wallpaper-main-preview').src = e.target.result; document.getElementById('wallpaper-main-preview').style.display = 'block'; state.customMainBg = e.target.result; }; reader.readAsDataURL(file); } }
+        async function saveWallpaperOnly() { applyWallpapers(state.customMainBg); await saveData(); alert("壁纸配置已应用！"); }
+        async function clearWallpaperOnly() { state.customMainBg = ''; document.getElementById('wallpaper-main-preview').style.display = 'none'; applyWallpapers(''); await saveData(); alert("壁纸已清除。"); }
+        function applyWallpapers(url) { if (url) { document.body.classList.add('has-custom-bg'); document.body.style.backgroundImage = `url(${url})`; } else { document.body.classList.remove('has-custom-bg'); document.body.style.backgroundImage = ''; } }
+        function openFallbackApp() { document.getElementById('fallback-modal-overlay').style.display = 'flex'; }
+        function closeFallbackModal() { document.getElementById('fallback-modal-overlay').style.display = 'none'; }
+        function exportAllData() { try { const data = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(state, null, 2)); const a = document.createElement('a'); a.href = data; a.download = `备份_${new Date().toISOString().slice(0,10)}.json`; document.body.appendChild(a); a.click(); a.remove(); } catch(e) { alert("导出失败"); } }
+        function triggerImportAllData() { document.getElementById('backup-file-input').click(); }
+        function importAllData(e) { const file = e.target.files[0]; if (!file) return; const r = new FileReader(); r.onload = async (ev) => { try { state = Object.assign(state, JSON.parse(ev.target.result)); await saveData(); alert("恢复成功！"); location.reload(); } catch(err) { alert("出错: " + err.message); } }; r.readAsText(file); }
+
+        function selectInspTag(el) { document.querySelectorAll('#insp-tag-selector .folder-tag').forEach(t => t.classList.remove('active')); el.classList.add('active'); const customGroup = document.getElementById('insp-custom-tag-group'); customGroup.style.display = el.dataset.tag === '自定义' ? 'block' : 'none'; }
+        function generateInspiration() {
+            const el = document.querySelector('#insp-tag-selector .folder-tag.active'); if (!el) return;
+            const tagVal = el.dataset.tag; const finalTag = tagVal === '自定义' ? document.getElementById('insp-custom-tag').value.trim() : tagVal;
+            if (tagVal === '自定义' && !finalTag) return alert("请输入自定义分类！");
+            const dir = document.getElementById('insp-direction-input').value.trim();
+            const sb = document.getElementById('insp-stream-box'); sb.style.display = 'block'; sb.style.color = 'var(--text-main)'; sb.innerText = `正在策划灵感中...`;
+            document.getElementById('post-insp-action-row').style.display = 'none'; document.getElementById('post-insp-edit-panel').style.display = 'none';
+            let sysPrompt = `你是一个脑洞大开的灵感策划师。\n基于分类：【${finalTag}】 脑补极具张力的点子，无需寒暄。`;
+            let userMsg = `[方向]：${finalTag}\n[线索]：${dir || "无"}`;
+            if (!state.tApiUrl || !state.tApiKey) return sb.innerText = "❌ 文本 API 未配置";
+            callTextAPI(state.tApiUrl, state.tApiKey, state.tApiModel, sysPrompt, [{role: "user", content: userMsg}], true, (txt) => { sb.innerText = txt; }, (fin) => { const c = fin + "\n\n……end*"; sb.innerText = c; tempInspText = c; document.getElementById('post-insp-action-row').style.display = 'flex'; }, (err) => { sb.innerText = "失败: " + err; }, state.tApiProxy);
+        }
+        function continueGenerateInspiration() {
+            let base = document.getElementById('insp-stream-box').innerText; if (base.endsWith("\n\n……end*")) base = base.substring(0, base.length - 8);
+            const sb = document.getElementById('insp-stream-box'); sb.innerText = base + "\n\n正在续写..."; document.getElementById('post-insp-action-row').style.display = 'none';
+            callTextAPI(state.tApiUrl, state.tApiKey, state.tApiModel, "无缝接续上文", [{role:"user", content: `[已有]：\n${base}\n\n【继续】：`}], true, (txt) => { sb.innerText = base + txt; }, (fin) => { const c = base + fin + "\n\n……end*"; sb.innerText = c; tempInspText = c; document.getElementById('post-insp-action-row').style.display = 'flex'; }, (err) => { sb.innerText = "中断: " + err; }, state.tApiProxy);
+        }
+        function regenerateInspiration() { document.getElementById('insp-stream-box').innerText = ''; generateInspiration(); }
+        async function saveInspirationDirect() { const el = document.querySelector('#insp-tag-selector .folder-tag.active'); const tagVal = el ? el.dataset.tag : '灵感'; const finalTag = tagVal === '自定义' ? document.getElementById('insp-custom-tag').value.trim() : tagVal; state.inspirations.unshift({ id: Date.now(), title: finalTag, content: tempInspText, folder: '首页' }); await saveData(); renderInspirationsList('首页'); alert("已保存至灵感库！"); document.getElementById('post-insp-action-row').style.display = 'none'; document.getElementById('insp-stream-box').style.display = 'none'; }
+        function enterInspEditMode() { document.getElementById('insp-stream-box').style.display = 'none'; document.getElementById('post-insp-action-row').style.display = 'none'; document.getElementById('insp-edit-textarea').value = tempInspText; document.getElementById('post-insp-edit-panel').style.display = 'block'; }
+        async function saveInspirationWithEdit() { const el = document.querySelector('#insp-tag-selector .folder-tag.active'); const tagVal = el ? el.dataset.tag : '灵感'; const finalTag = tagVal === '自定义' ? document.getElementById('insp-custom-tag').value.trim() : tagVal; state.inspirations.unshift({ id: Date.now(), title: finalTag, content: document.getElementById('insp-edit-textarea').value, folder: '首页' }); await saveData(); renderInspirationsList('首页'); alert("已微调并保存！"); document.getElementById('post-insp-edit-panel').style.display = 'none'; }
+        function toggleInspWarehouse() { const b = document.getElementById('insp-builder-panel'); const w = document.getElementById('insp-warehouse-panel'); const t = document.querySelector('#view-inspiration-library .app-title'); if (w.style.display === 'none') { b.style.display = 'none'; w.style.display = 'block'; t.innerText = "灵感仓库"; renderInspFolders(); renderInspirationsList('首页'); } else { b.style.display = 'block'; w.style.display = 'none'; t.innerText = "灵感库"; } }
+        function renderInspFolders() { const c = document.getElementById('insp-folders-list'); if (!c) return; c.innerHTML = state.inspFolders.map(f => `<div class="folder-tag ${f==='首页'?'active':''}" onclick="selInspFolder(this, '${f}')">${f}</div>`).join('') + `<button class="add-folder" onclick="addInspFolder()"><svg viewBox="0 0 24 24" width="20" height="20" stroke="currentColor" stroke-width="2" fill="none"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg></button>`; }
+        function selInspFolder(el, name) { cancelInspBatchMode(); document.querySelectorAll('#insp-folders-list .folder-tag').forEach(t => t.classList.remove('active')); el.classList.add('active'); renderInspirationsList(name); }
+        function addInspFolder() { const n = prompt("新分组:"); if (n && !state.inspFolders.includes(n)) { state.inspFolders.push(n); saveData(); renderInspFolders(); } }
+        function renderInspirationsList(folder = '首页') {
+            const c = document.getElementById('insp-cards-container'); if (!c) return; c.innerHTML = '';
+            const list = folder === '首页' ? state.inspirations : state.inspirations.filter(i => i.folder === folder);
+            list.forEach(insp => {
+                const item = document.createElement('div'); item.className = 'list-item' + (selectedInspIds.includes(insp.id) ? ' selected' : '');
+                item.addEventListener('touchstart', () => inspPressStart(insp.id)); item.addEventListener('touchend', inspPressEnd); item.addEventListener('mousedown', () => inspPressStart(insp.id)); item.addEventListener('mouseup', inspPressEnd);
+                item.addEventListener('click', () => { if (isInspBatchMode) toggleSelectInsp(insp.id); });
+                item.innerHTML = `<div class="list-header" style="margin-bottom: 6px;"><span style="font-size:15px; font-weight:bold;"># ${insp.title}</span><span style="font-size:10px; color:var(--text-light); background:rgba(0,0,0,0.05); padding:2px 6px; border-radius:4px;">${insp.folder || '首页'}</span></div><div class="list-desc" id="insp-desc-${insp.id}">${insp.content.substring(0, 60)}...</div><details style="font-size:13px; color:var(--text-muted); margin-top:8px; position:relative;" onclick="event.stopPropagation();"><summary style="outline:none; cursor:pointer; margin-bottom:8px; font-weight:500; font-size:12px;">展开查看全部</summary><div style="padding:10px; background-color:rgba(0,0,0,0.02); border-radius:8px; white-space:pre-wrap; line-height:1.6;" id="insp-full-content-${insp.id}">${insp.content}</div><div id="insp-edit-container-${insp.id}" style="display:none; margin-top:10px;"><textarea id="insp-edit-area-${insp.id}" class="input-text" style="height:150px; font-size:13px; line-height:1.6; font-family:monospace; margin-bottom:8px;">${insp.content}</textarea><button class="btn btn-primary" style="padding:6px 12px; font-size:12px; width:100%;" onclick="saveActiveInspCardEdit(${insp.id})">✓ 完成修改</button></div><button id="btn-insp-pen-${insp.id}" style="position:absolute; bottom:6px; right:6px; background:none; border:none; cursor:pointer; color:var(--text-light);" onclick="enterInspCardEditMode(${insp.id})"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg></button></details>`; c.appendChild(item);
+            });
+        }
+        let inspPressTimer; function inspPressStart(id) { if (isInspBatchMode) return; inspPressTimer = setTimeout(() => enterInspBatchMode(id), 800); } function inspPressEnd() { clearTimeout(inspPressTimer); }
+        function enterInspBatchMode(id) { isInspBatchMode = true; selectedInspIds = [id]; updateInspBatchUI(); }
+        function cancelInspBatchMode() { isInspBatchMode = false; selectedInspIds = []; renderInspirationsList(document.querySelector('#insp-folders-list .folder-tag.active')?.innerText || '首页'); }
+        function updateInspBatchUI() { const t = prompt("批量操作：输入 'del' 删除，或输入分组名移动："); if (t === 'del') state.inspirations = state.inspirations.filter(i => !selectedInspIds.includes(i.id)); else if (t) { if (state.inspFolders.includes(t)) state.inspirations.forEach(i => { if(selectedInspIds.includes(i.id)) i.folder = t; }); else alert("分组不存在！"); } saveData(); cancelInspBatchMode(); }
+        function toggleSelectInsp(id) { const idx = selectedInspIds.indexOf(id); if (idx > -1) selectedInspIds.splice(idx, 1); else selectedInspIds.push(id); if (selectedInspIds.length === 0) cancelInspBatchMode(); else updateInspBatchUI(); }
+        function enterInspCardEditMode(id) { document.getElementById(`insp-full-content-${id}`).style.display = 'none'; document.getElementById(`btn-insp-pen-${id}`).style.display = 'none'; document.getElementById(`insp-edit-container-${id}`).style.display = 'block'; }
+        async function saveActiveInspCardEdit(id) { const t = state.inspirations.find(i => i.id == id); if (!t) return; t.content = document.getElementById(`insp-edit-area-${id}`).value; await saveData(); document.getElementById(`insp-full-content-${id}`).innerText = t.content; document.getElementById(`insp-full-content-${id}`).style.display = 'block'; document.getElementById(`btn-insp-pen-${id}`).style.display = 'block'; document.getElementById(`insp-edit-container-${id}`).style.display = 'none'; document.getElementById(`insp-desc-${id}`).innerText = t.content.substring(0, 60) + '...'; alert("修改成功！"); }
+
+        function openGlobalWarehouse() { document.getElementById('global-insp-warehouse-modal').style.display = 'flex'; renderGlobalInspFolders(); renderGlobalInspList('首页'); }
+        function closeGlobalWarehouse() { document.getElementById('global-insp-warehouse-modal').style.display = 'none'; }
+        function renderGlobalInspFolders() { const c = document.getElementById('global-insp-folders'); if(!state.inspFolders) state.inspFolders = ['首页']; c.innerHTML = state.inspFolders.map(f => `<div class="folder-tag ${f==='首页'?'active':''}" style="margin:4px;" onclick="selGlobalInspFolder(this, '${f}')">${f}</div>`).join(''); }
+        function selGlobalInspFolder(el, name) { document.querySelectorAll('#global-insp-folders .folder-tag').forEach(t => t.classList.remove('active')); el.classList.add('active'); renderGlobalInspList(name); }
+        function renderGlobalInspList(folder) { const c = document.getElementById('global-insp-list'); const list = folder === '首页' ? state.inspirations : state.inspirations.filter(i => i.folder === folder); c.innerHTML = list.map(insp => `<div class="list-item" style="margin-bottom:8px; border:1px solid #ddd;"><div style="font-weight:bold; font-size:13px; margin-bottom:4px; color:#222;"># ${insp.title}</div><div style="font-size:12px; color:var(--text-muted); white-space:pre-wrap;">${insp.content}</div></div>`).join('') || '<div style="text-align:center; font-size:12px; color:#888;">此分组暂无灵感</div>'; }
+
+// ==================== 统一教程引擎核心 ====================
         let tutorialAdvanceLocked = false;
         function runTypewriter(elId, str, isFirstTime, onComplete, onTyping) {
             const el = document.getElementById(elId); el.innerText = ""; let idx = 0; tutorialAdvanceLocked = true;
@@ -762,15 +1219,37 @@
                 }
             }, 85);
         }
-        function setSpotlightTarget(elId, sId) { const el = document.getElementById(elId); const s = document.getElementById(sId); if (!el || !s) return; const rect = el.getBoundingClientRect(); const p = 6; s.style.width = (rect.width + p*2) + 'px'; s.style.height = (rect.height + p*2) + 'px'; s.style.left = (rect.left - p) + 'px'; s.style.top = (rect.top - p) + 'px'; s.style.display = 'block'; }
+
+        function setSpotlightTarget(elId, sId) { 
+            const el = document.getElementById(elId); const s = document.getElementById(sId); if (!el || !s) return; 
+            const rect = el.getBoundingClientRect(); const p = 6; 
+            s.style.width = (rect.width + p*2) + 'px'; s.style.height = (rect.height + p*2) + 'px'; 
+            s.style.left = (rect.left - p) + 'px'; s.style.top = (rect.top - p) + 'px'; s.style.display = 'block'; 
+        }
         function hideSpotlight(sId) { const s = document.getElementById(sId); if (s) s.style.display = 'none'; }
+
         function positionTutorialBox(type, boxId, targetId) { 
             const box = document.getElementById(boxId); if (!box) return; 
+            // 每次重新定位前，清除所有的定位属性，防止相互干扰
+            box.style.top = ''; box.style.bottom = ''; box.style.left = ''; box.style.right = ''; box.style.transform = ''; box.style.maxWidth = '';
+            
             if (type === 'center') { 
                 box.style.top = '50%'; box.style.left = '50%'; box.style.transform = 'translate(-50%, -50%)'; 
             } else { 
                 box.style.left = '16px'; box.style.right = '16px'; box.style.maxWidth = 'calc(100% - 32px)'; box.style.transform = 'none'; 
-                if (targetId) { const target = document.getElementById(targetId); if (target) { const rect = target.getBoundingClientRect(); box.style.top = (rect.bottom + 15) + 'px'; } }
+                if (targetId) { 
+                    const target = document.getElementById(targetId); 
+                    if (target) { 
+                        const rect = target.getBoundingClientRect(); 
+                        if (type === 'dynamic-top') {
+                            // 让白板显示在按键/高亮框的正上方（距离15px）
+                            box.style.bottom = (window.innerHeight - rect.top + 15) + 'px';
+                        } else {
+                            // 默认显示在正下方
+                            box.style.top = (rect.bottom + 15) + 'px';
+                        }
+                    } 
+                }
             } 
         }
 
@@ -780,9 +1259,9 @@
         async function advanceInspTutorialStep() { 
             if(tutorialAdvanceLocked || (inspTutorialStep===0 && document.getElementById('btn-insp-tutorial-confirm').disabled)) return; 
             inspTutorialStep++; document.getElementById('btn-insp-tutorial-confirm').style.display = 'none'; 
-            if(inspTutorialStep===1){ document.getElementById('insp-tutorial-mask').style.backgroundColor = 'transparent'; document.getElementById('insp-tutorial-mask').style.backdropFilter = 'none'; setSpotlightTarget('btn-insp-warehouse', 'insp-tutorial-spotlight'); positionTutorialBox('dynamic', 'insp-tutorial-box', 'btn-insp-warehouse'); runTypewriter('insp-tutorial-typewriter', inspLines[1], inspFirstTime); } 
-            else if(inspTutorialStep===2){ setSpotlightTarget('insp-tag-selector', 'insp-tutorial-spotlight'); positionTutorialBox('dynamic', 'insp-tutorial-box', 'insp-tag-selector'); runTypewriter('insp-tutorial-typewriter', inspLines[2], inspFirstTime); } 
-            else if(inspTutorialStep===3){ document.getElementById('post-insp-action-row').style.display = 'flex'; setSpotlightTarget('post-insp-action-row', 'insp-tutorial-spotlight'); positionTutorialBox('dynamic', 'insp-tutorial-box', 'post-insp-action-row'); runTypewriter('insp-tutorial-typewriter', inspLines[3], inspFirstTime); } 
+            if(inspTutorialStep===1){ document.getElementById('insp-tutorial-mask').style.backgroundColor = 'transparent'; document.getElementById('insp-tutorial-mask').style.backdropFilter = 'none'; setSpotlightTarget('btn-insp-warehouse', 'insp-tutorial-spotlight'); positionTutorialBox('dynamic-bottom', 'insp-tutorial-box', 'btn-insp-warehouse'); runTypewriter('insp-tutorial-typewriter', inspLines[1], inspFirstTime); } 
+            else if(inspTutorialStep===2){ setSpotlightTarget('insp-tag-selector', 'insp-tutorial-spotlight'); positionTutorialBox('dynamic-bottom', 'insp-tutorial-box', 'insp-tag-selector'); runTypewriter('insp-tutorial-typewriter', inspLines[2], inspFirstTime); } 
+            else if(inspTutorialStep===3){ document.getElementById('post-insp-action-row').style.display = 'flex'; setSpotlightTarget('post-insp-action-row', 'insp-tutorial-spotlight'); positionTutorialBox('dynamic-bottom', 'insp-tutorial-box', 'post-insp-action-row'); runTypewriter('insp-tutorial-typewriter', inspLines[3], inspFirstTime); } 
             else if(inspTutorialStep===4){ document.getElementById('post-insp-action-row').style.display = 'none'; hideSpotlight('insp-tutorial-spotlight'); document.getElementById('insp-tutorial-mask').style.backgroundColor = 'rgba(0,0,0,0.65)'; document.getElementById('insp-tutorial-mask').style.backdropFilter = 'blur(10px)'; positionTutorialBox('center', 'insp-tutorial-box'); runTypewriter('insp-tutorial-typewriter', inspLines[4], inspFirstTime, ()=>{ setTimeout(async ()=>{ document.getElementById('insp-tutorial-mask').style.display = 'none'; state.insp_tutorial_shown = true; await saveData(); }, 1500); }); } 
         }
         function resetInspTutorial() { state.insp_tutorial_shown = false; startInspTutorialFlow(false); }
@@ -793,9 +1272,9 @@
         async function advanceIfTutorialStep() { 
             if(tutorialAdvanceLocked || (ifTutorialStep===0 && document.getElementById('btn-if-tutorial-confirm').disabled)) return; 
             ifTutorialStep++; document.getElementById('btn-if-tutorial-confirm').style.display = 'none'; 
-            if(ifTutorialStep===1){ document.getElementById('if-tutorial-mask').style.backgroundColor = 'transparent'; document.getElementById('if-tutorial-mask').style.backdropFilter = 'none'; setSpotlightTarget('btn-if-warehouse', 'if-tutorial-spotlight'); positionTutorialBox('dynamic', 'if-tutorial-box', 'btn-if-warehouse'); runTypewriter('if-tutorial-typewriter', ifLines[1], ifFirstTime); } 
-            else if(ifTutorialStep===2){ setSpotlightTarget('if-tutorial-target-2', 'if-tutorial-spotlight'); positionTutorialBox('dynamic', 'if-tutorial-box', 'if-tutorial-target-2'); runTypewriter('if-tutorial-typewriter', ifLines[2], ifFirstTime); } 
-            else if(ifTutorialStep===3){ setSpotlightTarget('if-avatar-upload-box', 'if-tutorial-spotlight'); positionTutorialBox('dynamic', 'if-tutorial-box', 'if-avatar-upload-box'); runTypewriter('if-tutorial-typewriter', ifLines[3], ifFirstTime); } 
+            if(ifTutorialStep===1){ document.getElementById('if-tutorial-mask').style.backgroundColor = 'transparent'; document.getElementById('if-tutorial-mask').style.backdropFilter = 'none'; setSpotlightTarget('btn-if-warehouse', 'if-tutorial-spotlight'); positionTutorialBox('dynamic-bottom', 'if-tutorial-box', 'btn-if-warehouse'); runTypewriter('if-tutorial-typewriter', ifLines[1], ifFirstTime); } 
+            else if(ifTutorialStep===2){ setSpotlightTarget('if-tutorial-target-2', 'if-tutorial-spotlight'); positionTutorialBox('dynamic-bottom', 'if-tutorial-box', 'if-tutorial-target-2'); runTypewriter('if-tutorial-typewriter', ifLines[2], ifFirstTime); } 
+            else if(ifTutorialStep===3){ setSpotlightTarget('if-avatar-upload-box', 'if-tutorial-spotlight'); positionTutorialBox('dynamic-bottom', 'if-tutorial-box', 'if-avatar-upload-box'); runTypewriter('if-tutorial-typewriter', ifLines[3], ifFirstTime); } 
             else if(ifTutorialStep===4){ hideSpotlight('if-tutorial-spotlight'); document.getElementById('if-tutorial-mask').style.backgroundColor = 'rgba(0,0,0,0.65)'; document.getElementById('if-tutorial-mask').style.backdropFilter = 'blur(10px)'; positionTutorialBox('center', 'if-tutorial-box'); runTypewriter('if-tutorial-typewriter', ifLines[4], ifFirstTime, ()=>{ setTimeout(async ()=>{ document.getElementById('if-tutorial-mask').style.display = 'none'; state.if_tutorial_shown = true; await saveData(); }, 1500); }); } 
         }
         function resetIfTutorial() { state.if_tutorial_shown = false; startIfTutorialFlow(false); }
@@ -807,12 +1286,67 @@
         async function advanceWvTutorialStep() {
             if(tutorialAdvanceLocked || (wvTutorialStep===0 && document.getElementById('btn-wv-tutorial-confirm').disabled)) return;
             wvTutorialStep++; document.getElementById('btn-wv-tutorial-confirm').style.display = 'none';
-            if(wvTutorialStep===1){ document.getElementById('wv-tutorial-mask').style.backgroundColor = 'transparent'; document.getElementById('wv-tutorial-mask').style.backdropFilter = 'none'; setSpotlightTarget('btn-wv-warehouse', 'wv-tutorial-spotlight'); positionTutorialBox('dynamic', 'wv-tutorial-box', 'btn-wv-warehouse'); runTypewriter('wv-tutorial-typewriter', wvLines[1], wvFirstTime); }
-            else if(wvTutorialStep===2){ setSpotlightTarget('wv-normal-panel', 'wv-tutorial-spotlight'); positionTutorialBox('dynamic', 'wv-tutorial-box', 'wv-normal-panel'); runTypewriter('wv-tutorial-typewriter', wvLines[2], wvFirstTime); }
-            else if(wvTutorialStep===3){ document.getElementById('post-wv-gen-retry-row').style.display = 'flex'; document.getElementById('post-wv-gen-action-row').style.display = 'flex'; setSpotlightTarget('wv-tutorial-target-actions', 'wv-tutorial-spotlight'); positionTutorialBox('dynamic', 'wv-tutorial-box', 'wv-tutorial-target-actions'); const trig = wvLines[3].indexOf("会弹出一个保存键"); runTypewriter('wv-tutorial-typewriter', wvLines[3], wvFirstTime, null, (idx)=>{ if(idx===trig){ document.getElementById('post-wv-gen-retry-row').style.display='none'; document.getElementById('post-wv-gen-action-row').style.display='none'; document.getElementById('post-wv-gen-edit-panel').style.display='block'; setSpotlightTarget('wv-gen-save-btn', 'wv-tutorial-spotlight'); positionTutorialBox('dynamic', 'wv-tutorial-box', 'post-wv-gen-edit-panel'); } }); }
-            else if(wvTutorialStep===4){ document.getElementById('post-wv-gen-edit-panel').style.display='none'; document.getElementById('wv-tutorial-target-tabs').style.zIndex = '1200'; setSpotlightTarget('wv-tutorial-target-tabs', 'wv-tutorial-spotlight'); positionTutorialBox('dynamic', 'wv-tutorial-box', 'wv-tutorial-target-tabs'); runTypewriter('wv-tutorial-typewriter', wvLines[4], wvFirstTime, ()=>{ tutorialAdvanceLocked = true; document.getElementById('wv-tutorial-click-hint').innerText = "请点击if线世界观"; }); }
-            else if(wvTutorialStep===5){ document.getElementById('wv-tutorial-target-tabs').style.zIndex = '85'; setSpotlightTarget('wv-if-panel', 'wv-tutorial-spotlight'); positionTutorialBox('dynamic', 'wv-tutorial-box', 'wv-if-panel'); runTypewriter('wv-tutorial-typewriter', wvLines[5], wvFirstTime); }
-            else if(wvTutorialStep===6){ hideSpotlight('wv-tutorial-spotlight'); document.getElementById('wv-tutorial-mask').style.backgroundColor = 'rgba(0,0,0,0.65)'; document.getElementById('wv-tutorial-mask').style.backdropFilter = 'blur(10px)'; positionTutorialBox('center', 'wv-tutorial-box'); runTypewriter('wv-tutorial-typewriter', wvLines[6], wvFirstTime, ()=>{ setTimeout(async ()=>{ document.getElementById('wv-tutorial-mask').style.display = 'none'; state.wv_tutorial_shown = true; await saveData(); }, 1500); }); }
+            
+            if(wvTutorialStep===1){ 
+                document.getElementById('wv-tutorial-mask').style.backgroundColor = 'transparent'; document.getElementById('wv-tutorial-mask').style.backdropFilter = 'none'; 
+                setSpotlightTarget('btn-wv-warehouse', 'wv-tutorial-spotlight'); 
+                positionTutorialBox('dynamic-bottom', 'wv-tutorial-box', 'btn-wv-warehouse'); 
+                runTypewriter('wv-tutorial-typewriter', wvLines[1], wvFirstTime); 
+            }
+            else if(wvTutorialStep===2){ 
+                setSpotlightTarget('wv-normal-panel', 'wv-tutorial-spotlight'); 
+                positionTutorialBox('dynamic-bottom', 'wv-tutorial-box', 'wv-normal-panel'); 
+                runTypewriter('wv-tutorial-typewriter', wvLines[2], wvFirstTime); 
+            }
+            else if(wvTutorialStep===3){ 
+                document.getElementById('post-wv-gen-retry-row').style.display = 'flex'; 
+                document.getElementById('post-wv-gen-action-row').style.display = 'flex'; 
+                setSpotlightTarget('wv-tutorial-target-actions', 'wv-tutorial-spotlight'); 
+                
+                // 将光板显示在操作按键栏的上方
+                positionTutorialBox('dynamic-top', 'wv-tutorial-box', 'wv-tutorial-target-actions'); 
+                
+                const trig = wvLines[3].indexOf("会弹出一个保存键"); 
+                runTypewriter('wv-tutorial-typewriter', wvLines[3], wvFirstTime, null, (idx)=>{ 
+                    if(idx===trig){ 
+                        document.getElementById('post-wv-gen-retry-row').style.display='none'; 
+                        document.getElementById('post-wv-gen-action-row').style.display='none'; 
+                        document.getElementById('post-wv-gen-edit-panel').style.display='block'; 
+                        setSpotlightTarget('wv-gen-save-btn', 'wv-tutorial-spotlight'); 
+                        // 将光板显示在文本域与保存按钮（即这个长面板）的正上方
+                        positionTutorialBox('dynamic-top', 'wv-tutorial-box', 'post-wv-gen-edit-panel'); 
+                    } 
+                }); 
+            }
+            else if(wvTutorialStep===4){ 
+                document.getElementById('post-wv-gen-edit-panel').style.display='none'; 
+                document.getElementById('wv-tutorial-target-tabs').style.zIndex = '1200'; 
+                setSpotlightTarget('wv-tutorial-target-tabs', 'wv-tutorial-spotlight'); 
+                positionTutorialBox('dynamic-bottom', 'wv-tutorial-box', 'wv-tutorial-target-tabs'); 
+                runTypewriter('wv-tutorial-typewriter', wvLines[4], wvFirstTime, ()=>{ 
+                    tutorialAdvanceLocked = true; 
+                    document.getElementById('wv-tutorial-click-hint').innerText = "请点击if线世界观"; 
+                }); 
+            }
+            else if(wvTutorialStep===5){ 
+                document.getElementById('wv-tutorial-target-tabs').style.zIndex = '85'; 
+                setSpotlightTarget('wv-if-panel', 'wv-tutorial-spotlight'); 
+                positionTutorialBox('dynamic-bottom', 'wv-tutorial-box', 'wv-if-panel'); 
+                runTypewriter('wv-tutorial-typewriter', wvLines[5], wvFirstTime); 
+            }
+            else if(wvTutorialStep===6){ 
+                hideSpotlight('wv-tutorial-spotlight'); 
+                document.getElementById('wv-tutorial-mask').style.backgroundColor = 'rgba(0,0,0,0.65)'; 
+                document.getElementById('wv-tutorial-mask').style.backdropFilter = 'blur(10px)'; 
+                positionTutorialBox('center', 'wv-tutorial-box'); 
+                runTypewriter('wv-tutorial-typewriter', wvLines[6], wvFirstTime, ()=>{ 
+                    setTimeout(async ()=>{ 
+                        document.getElementById('wv-tutorial-mask').style.display = 'none'; 
+                        state.wv_tutorial_shown = true; 
+                        await saveData(); 
+                    }, 1500); 
+                }); 
+            }
         }
         function resetWvTutorial() { state.wv_tutorial_shown = false; document.getElementById('tab-wv-normal').click(); startWvTutorialFlow(false); }
 
@@ -845,7 +1379,17 @@
         function startIfWorldviewCascade() { document.getElementById('if-direction').value = ''; document.getElementById('if-stream-box').style.display = 'none'; document.getElementById('wv-if-cascade-card').style.display = 'none'; switchView('view-worldview-gen'); switchWvTab('if'); document.getElementById('wv-if-char-select').value = tempIfCharId; updateWvIfTagSelect(); }
 
         function switchWvTab(tab) {
-            if (wvTutorialStep === 4) { if (tab !== 'if') return; currentWvTab = tab; document.getElementById('tab-wv-normal').classList.remove('active'); document.getElementById('tab-wv-if').classList.add('active'); document.getElementById('wv-normal-panel').style.display = 'none'; document.getElementById('wv-if-panel').style.display = 'block'; tutorialAdvanceLocked = false; advanceWvTutorialStep(); return; }
+            if (wvTutorialStep === 4) { 
+                if (tab !== 'if') return; 
+                currentWvTab = tab; 
+                document.getElementById('tab-wv-normal').classList.remove('active'); 
+                document.getElementById('tab-wv-if').classList.add('active'); 
+                document.getElementById('wv-normal-panel').style.display = 'none'; 
+                document.getElementById('wv-if-panel').style.display = 'block'; 
+                tutorialAdvanceLocked = false; 
+                advanceWvTutorialStep(); 
+                return; 
+            }
             currentWvTab = tab; document.getElementById('tab-wv-normal').classList.toggle('active', tab === 'normal'); document.getElementById('tab-wv-if').classList.toggle('active', tab === 'if'); document.getElementById('wv-normal-panel').style.display = tab === 'normal' ? 'block' : 'none'; document.getElementById('wv-if-panel').style.display = tab === 'if' ? 'block' : 'none';
         }
         function updateWvCharSelect() { const sel = document.getElementById('wv-normal-char-select'); sel.innerHTML = state.cards.map(c => `<option value="${c.id}">${c.name}</option>`).join(''); if(state.cards.length === 0) sel.innerHTML = '<option value="">(无主C卡)</option>'; }
